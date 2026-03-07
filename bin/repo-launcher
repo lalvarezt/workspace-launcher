@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
+	cat <<'EOF'
 Usage: repo-launcher [--print|--shell] [--query TEXT] [ROOT]
 
 Launch an fzf-based repo picker.
@@ -23,8 +23,8 @@ EOF
 }
 
 die() {
-  printf 'repo-launcher: %s\n' "$*" >&2
-  exit 1
+	printf 'repo-launcher: %s\n' "$*" >&2
+	exit 1
 }
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -34,30 +34,30 @@ fzf_bin=${FZF_BIN:-}
 mode=print
 initial_query=
 root=${REPO_LAUNCHER_ROOT:-$HOME/git-repos}
-max_jobs=$(getconf _NPROCESSORS_ONLN 2> /dev/null || nproc 2> /dev/null || printf '1')
+max_jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || printf '1')
 [[ $max_jobs =~ ^[0-9]+$ ]] || max_jobs=1
 if ((max_jobs < 1)); then
-  max_jobs=1
+	max_jobs=1
 fi
 jobs=${REPO_LAUNCHER_JOBS:-$max_jobs}
 if [[ ! $jobs =~ ^[0-9]+$ ]]; then
-  jobs=1
+	jobs=1
 elif ((jobs < 1)); then
-  jobs=1
+	jobs=1
 elif ((jobs > max_jobs)); then
-  jobs=$max_jobs
+	jobs=$max_jobs
 fi
 git_dirty=${REPO_LAUNCHER_GIT_DIRTY:-0}
 if [[ $git_dirty != 1 ]]; then
-  git_dirty=0
+	git_dirty=0
 fi
 recency=${REPO_LAUNCHER_RECENCY:-mtime}
 if [[ $recency != git ]]; then
-  recency=mtime
+	recency=mtime
 fi
 now=$(printf '%(%s)T' -1)
 cwd=$(pwd -P)
-cols=${COLUMNS:-$(tput cols 2> /dev/null || printf '120')}
+cols=${COLUMNS:-$(tput cols 2>/dev/null || printf '120')}
 [[ $cols =~ ^[0-9]+$ ]] || cols=120
 column_gap='   '
 gap_width=3
@@ -69,7 +69,7 @@ chrome_width=18
 meta_width=$((lang_width + git_width + age_width + 2 * gap_width))
 name_width=$((cols - chrome_width - meta_width))
 if ((name_width < 16)); then
-  name_width=16
+	name_width=16
 fi
 
 c_reset=$'\033[0m'
@@ -89,384 +89,384 @@ c_git_dirty=$'\033[38;5;215m'
 c_time=$'\033[38;5;246m'
 
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --print)
-      mode=print
-      ;;
-    --shell)
-      mode=shell
-      ;;
-    --query)
-      shift
-      [[ $# -gt 0 ]] || die "missing value for --query"
-      initial_query=$1
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      die "unknown option: $1"
-      ;;
-    *)
-      root=$1
-      ;;
-  esac
-  shift
+	case "$1" in
+	--print)
+		mode=print
+		;;
+	--shell)
+		mode=shell
+		;;
+	--query)
+		shift
+		[[ $# -gt 0 ]] || die "missing value for --query"
+		initial_query=$1
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--)
+		shift
+		break
+		;;
+	-*)
+		die "unknown option: $1"
+		;;
+	*)
+		root=$1
+		;;
+	esac
+	shift
 done
 
 if [[ $# -gt 0 ]]; then
-  die "too many arguments"
+	die "too many arguments"
 fi
 
 root=${root/#\~/$HOME}
 root=$(cd -- "$root" && pwd -P) || die "root does not exist: $root"
 
 resolve_fzf() {
-  if [[ -n $fzf_bin ]]; then
-    printf '%s\n' "$fzf_bin"
-  elif [[ -x $repo_root/bin/fzf ]]; then
-    printf '%s\n' "$repo_root/bin/fzf"
-  else
-    command -v fzf || die "fzf not found"
-  fi
+	if [[ -n $fzf_bin ]]; then
+		printf '%s\n' "$fzf_bin"
+	elif [[ -x $repo_root/bin/fzf ]]; then
+		printf '%s\n' "$repo_root/bin/fzf"
+	else
+		command -v fzf || die "fzf not found"
+	fi
 }
 
 format_age() {
-  local epoch diff days hours mins
+	local epoch diff days hours mins
 
-  epoch=$1
-  diff=$((now - epoch))
-  if ((diff < 0)); then
-    diff=0
-  fi
+	epoch=$1
+	diff=$((now - epoch))
+	if ((diff < 0)); then
+		diff=0
+	fi
 
-  days=$((diff / 86400))
-  hours=$(((diff % 86400) / 3600))
-  mins=$(((diff % 3600) / 60))
+	days=$((diff / 86400))
+	hours=$(((diff % 86400) / 3600))
+	mins=$(((diff % 3600) / 60))
 
-  printf '%02dd %02dh %02dm' "$days" "$hours" "$mins"
+	printf '%02dd %02dh %02dm' "$days" "$hours" "$mins"
 }
 
 detect_language() {
-  local dir=$1
+	local dir=$1
 
-  if [[ -f $dir/go.mod ]]; then
-    printf 'Go'
-  elif [[ -f $dir/Cargo.toml ]]; then
-    printf 'Rust'
-  elif [[ -f $dir/package.json ]]; then
-    printf 'Node'
-  elif [[ -f $dir/pyproject.toml || -f $dir/requirements.txt || -f $dir/setup.py ]]; then
-    printf 'Python'
-  elif [[ -f $dir/init.lua || -f $dir/.luarc.json ]]; then
-    printf 'Lua'
-  elif [[ -f $dir/Gemfile ]]; then
-    printf 'Ruby'
-  elif [[ -f $dir/flake.nix || -f $dir/default.nix ]]; then
-    printf 'Nix'
-  else
-    printf '-'
-  fi
+	if [[ -f $dir/go.mod ]]; then
+		printf 'Go'
+	elif [[ -f $dir/Cargo.toml ]]; then
+		printf 'Rust'
+	elif [[ -f $dir/package.json ]]; then
+		printf 'Node'
+	elif [[ -f $dir/pyproject.toml || -f $dir/requirements.txt || -f $dir/setup.py ]]; then
+		printf 'Python'
+	elif [[ -f $dir/init.lua || -f $dir/.luarc.json ]]; then
+		printf 'Lua'
+	elif [[ -f $dir/Gemfile ]]; then
+		printf 'Ruby'
+	elif [[ -f $dir/flake.nix || -f $dir/default.nix ]]; then
+		printf 'Nix'
+	else
+		printf '-'
+	fi
 }
 
 detect_git_state() {
-  local dir=$1
+	local dir=$1
 
-  if [[ ! -e $dir/.git ]]; then
-    printf '-'
-    return
-  fi
+	if [[ ! -e $dir/.git ]]; then
+		printf '-'
+		return
+	fi
 
-  if ((git_dirty == 0)); then
-    printf 'git'
-    return
-  fi
+	if ((git_dirty == 0)); then
+		printf 'git'
+		return
+	fi
 
-  if [[ -n $(git -C "$dir" status --porcelain --untracked-files=normal 2> /dev/null) ]]; then
-    printf 'git*'
-  else
-    printf 'git'
-  fi
+	if [[ -n $(git -C "$dir" status --porcelain --untracked-files=normal 2>/dev/null) ]]; then
+		printf 'git*'
+	else
+		printf 'git'
+	fi
 }
 
 repo_epoch() {
-  local dir=$1 epoch
+	local dir=$1 epoch
 
-  if [[ $recency == mtime || ! -e $dir/.git ]]; then
-    stat -c %Y "$dir"
-    return
-  fi
+	if [[ $recency == mtime || ! -e $dir/.git ]]; then
+		stat -c %Y "$dir"
+		return
+	fi
 
-  epoch=$(git -C "$dir" -c log.showSignature=false log -1 --format=%ct 2> /dev/null || true)
-  if [[ -n $epoch ]]; then
-    printf '%s\n' "$epoch"
-  else
-    stat -c %Y "$dir"
-  fi
+	epoch=$(git -C "$dir" -c log.showSignature=false log -1 --format=%ct 2>/dev/null || true)
+	if [[ -n $epoch ]]; then
+		printf '%s\n' "$epoch"
+	else
+		stat -c %Y "$dir"
+	fi
 }
 
 is_current_repo() {
-  local dir=$1
+	local dir=$1
 
-  [[ $cwd == "$dir" || $cwd == "$dir"/* ]]
+	[[ $cwd == "$dir" || $cwd == "$dir"/* ]]
 }
 
 fit_field() {
-  local text=$1 width=$2 trimmed
+	local text=$1 width=$2 trimmed
 
-  if ((${#text} <= width)); then
-    printf -v REPLY '%-*s' "$width" "$text"
-    return
-  fi
+	if ((${#text} <= width)); then
+		printf -v REPLY '%-*s' "$width" "$text"
+		return
+	fi
 
-  if ((width <= 3)); then
-    printf -v REPLY '%.*s' "$width" "$text"
-    return
-  fi
+	if ((width <= 3)); then
+		printf -v REPLY '%.*s' "$width" "$text"
+		return
+	fi
 
-  trimmed=${text:0:width-3}
-  printf -v REPLY '%-*s' "$width" "$trimmed..."
+	trimmed=${text:0:width-3}
+	printf -v REPLY '%-*s' "$width" "$trimmed..."
 }
 
 paint_field() {
-  local color=$1 text=$2
+	local color=$1 text=$2
 
-  REPLY=${color}${text}${c_reset}
+	REPLY=${color}${text}${c_reset}
 }
 
 render_name_field() {
-  local name=$1
+	local name=$1
 
-  fit_field "$name" "$name_width"
-  paint_field "$c_name" "$REPLY"
+	fit_field "$name" "$name_width"
+	paint_field "$c_name" "$REPLY"
 }
 
 render_lang_field() {
-  local lang=$1 icon label color icon_cell
+	local lang=$1 icon label color icon_cell
 
-  case "$lang" in
-    Go)
-      icon=''
-      label='Go'
-      color=$c_go
-      ;;
-    Rust)
-      icon=''
-      label='Rust'
-      color=$c_rust
-      ;;
-    Python)
-      icon=''
-      label='Python'
-      color=$c_python
-      ;;
-    Node)
-      icon=''
-      label='Node'
-      color=$c_node
-      ;;
-    Lua)
-      icon=''
-      label='Lua'
-      color=$c_lua
-      ;;
-    Ruby)
-      icon=''
-      label='Ruby'
-      color=$c_ruby
-      ;;
-    Nix)
-      icon=''
-      label='Nix'
-      color=$c_nix
-      ;;
-    *)
-      icon='•'
-      label='Misc'
-      color=$c_misc
-      ;;
-  esac
+	case "$lang" in
+	Go)
+		icon=''
+		label='Go'
+		color=$c_go
+		;;
+	Rust)
+		icon=''
+		label='Rust'
+		color=$c_rust
+		;;
+	Python)
+		icon=''
+		label='Python'
+		color=$c_python
+		;;
+	Node)
+		icon=''
+		label='Node'
+		color=$c_node
+		;;
+	Lua)
+		icon=''
+		label='Lua'
+		color=$c_lua
+		;;
+	Ruby)
+		icon=''
+		label='Ruby'
+		color=$c_ruby
+		;;
+	Nix)
+		icon=''
+		label='Nix'
+		color=$c_nix
+		;;
+	*)
+		icon='•'
+		label='Misc'
+		color=$c_misc
+		;;
+	esac
 
-  case "$icon" in
-    '•')
-      icon_cell='•  '
-      ;;
-    *)
-      icon_cell="$icon  "
-      ;;
-  esac
+	case "$icon" in
+	'•')
+		icon_cell='•  '
+		;;
+	*)
+		icon_cell="$icon  "
+		;;
+	esac
 
-  fit_field "$label" "$lang_label_width"
-  paint_field "$color" "$icon_cell$REPLY"
+	fit_field "$label" "$lang_label_width"
+	paint_field "$color" "$icon_cell$REPLY"
 }
 
 render_git_field() {
-  local state=$1 plain color
+	local state=$1 plain color
 
-  case "$state" in
-    git)
-      plain='git'
-      color=$c_git
-      ;;
-    git*)
-      plain='git*'
-      color=$c_git_dirty
-      ;;
-    *)
-      plain='-'
-      color=$c_dim
-      ;;
-  esac
+	case "$state" in
+	git)
+		plain='git'
+		color=$c_git
+		;;
+	git*)
+		plain='git*'
+		color=$c_git_dirty
+		;;
+	*)
+		plain='-'
+		color=$c_dim
+		;;
+	esac
 
-  fit_field "$plain" "$git_width"
-  paint_field "$color" "$REPLY"
+	fit_field "$plain" "$git_width"
+	paint_field "$color" "$REPLY"
 }
 
 render_age_field() {
-  local age=$1
+	local age=$1
 
-  fit_field "$age" "$age_width"
-  paint_field "$c_time" "$REPLY"
+	fit_field "$age" "$age_width"
+	paint_field "$c_time" "$REPLY"
 }
 
 render_marker_field() {
-  local marker=$1
+	local marker=$1
 
-  if [[ $marker == '*' ]]; then
-    paint_field "$c_current" '*'
-  else
-    paint_field "$c_dim" ' '
-  fi
+	if [[ $marker == '*' ]]; then
+		paint_field "$c_current" '*'
+	else
+		paint_field "$c_dim" ' '
+	fi
 }
 
 describe_repo() {
-  local dir=$1 epoch age_label name lang git_state marker display marker_field name_field lang_field git_field age_field
+	local dir=$1 epoch age_label name lang git_state marker display marker_field name_field lang_field git_field age_field
 
-  epoch=$(repo_epoch "$dir")
-  age_label=$(format_age "$epoch")
-  name=${dir##*/}
-  lang=$(detect_language "$dir")
-  git_state=$(detect_git_state "$dir")
-  marker=' '
-  if is_current_repo "$dir"; then
-    marker='*'
-  fi
+	epoch=$(repo_epoch "$dir")
+	age_label=$(format_age "$epoch")
+	name=${dir##*/}
+	lang=$(detect_language "$dir")
+	git_state=$(detect_git_state "$dir")
+	marker=' '
+	if is_current_repo "$dir"; then
+		marker='*'
+	fi
 
-  render_marker_field "$marker"
-  marker_field=$REPLY
-  render_name_field "$name"
-  name_field=$REPLY
-  render_lang_field "$lang"
-  lang_field=$REPLY
-  render_git_field "$git_state"
-  git_field=$REPLY
-  render_age_field "$age_label"
-  age_field=$REPLY
+	render_marker_field "$marker"
+	marker_field=$REPLY
+	render_name_field "$name"
+	name_field=$REPLY
+	render_lang_field "$lang"
+	lang_field=$REPLY
+	render_git_field "$git_state"
+	git_field=$REPLY
+	render_age_field "$age_label"
+	age_field=$REPLY
 
-  printf -v display '%s %s%s%s%s%s%s%s' \
-    "$marker_field" "$name_field" "$column_gap" "$lang_field" "$column_gap" "$git_field" "$column_gap" "$age_field"
+	printf -v display '%s %s%s%s%s%s%s%s' \
+		"$marker_field" "$name_field" "$column_gap" "$lang_field" "$column_gap" "$git_field" "$column_gap" "$age_field"
 
-  printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
+	printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
 }
 
 build_candidates() {
-  local dir
-  local -a dirs=()
+	local dir
+	local -a dirs=()
 
-  shopt -s nullglob
-  for dir in "$root"/*; do
-    [[ -d $dir ]] || continue
-    dirs+=("$dir")
-  done
+	shopt -s nullglob
+	for dir in "$root"/*; do
+		[[ -d $dir ]] || continue
+		dirs+=("$dir")
+	done
 
-  ((${#dirs[@]} > 0)) || return 0
+	((${#dirs[@]} > 0)) || return 0
 
-  if ((jobs <= 1 || ${#dirs[@]} == 1)); then
-    for dir in "${dirs[@]}"; do
-      describe_repo "$dir"
-    done
-    return
-  fi
+	if ((jobs <= 1 || ${#dirs[@]} == 1)); then
+		for dir in "${dirs[@]}"; do
+			describe_repo "$dir"
+		done
+		return
+	fi
 
-  export now cwd name_width lang_width lang_label_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
-  export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_name_field render_lang_field render_git_field render_age_field render_marker_field describe_repo
-  printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
+	export now cwd name_width lang_width lang_label_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
+	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_name_field render_lang_field render_git_field render_age_field render_marker_field describe_repo
+	printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
 
 validate_new_name() {
-  local name=$1
+	local name=$1
 
-  [[ -n $name ]] || die "empty query"
-  [[ $name != */* ]] || die "new repo name cannot contain '/'"
-  [[ $name != '.' && $name != '..' ]] || die "invalid repo name: $name"
+	[[ -n $name ]] || die "empty query"
+	[[ $name != */* ]] || die "new repo name cannot contain '/'"
+	[[ $name != '.' && $name != '..' ]] || die "invalid repo name: $name"
 }
 
 pick_repo() {
-  local fzf_cmd=$1
+	local fzf_cmd=$1
 
-  build_candidates \
-    | sort -t $'\t' -k1,1nr \
-    | cut -f2- \
-    | "$fzf_cmd" \
-        --ansi \
-        --layout=reverse \
-        --height=100% \
-        --prompt='' \
-        --pointer='▌' \
-        --color='bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2' \
-        --color='hl:#e0a65b,hl+:#ffd08a,prompt:#8ecfd0,query:#f6efe2,ghost:#6d7d88' \
-        --color='border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6' \
-        --color='input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f' \
-        --color='pointer:#efbf7a,separator:#36434d,scrollbar:#55636e' \
-        --ghost='Type to filter, Enter to open, Ctrl-N to create' \
-        --input-border \
-        --input-label=' Search/New ' \
-        --list-border \
-        --list-label=' Folders ' \
-        --footer='Enter open | Ctrl-N create | Esc quit' \
-        --footer-border=line \
-        --info=hidden \
-        --delimiter=$'\t' \
-        --with-nth=2.. \
-        --query="$initial_query" \
-        --bind 'enter:accept-or-print-query' \
-        --bind 'ctrl-n:print({q})+accept' \
-        --bind 'result:transform-list-label:printf " Folders (%s) " "$FZF_MATCH_COUNT"'
+	build_candidates |
+		sort -t $'\t' -k1,1nr |
+		cut -f2- |
+		"$fzf_cmd" \
+			--ansi \
+			--layout=reverse \
+			--height=100% \
+			--prompt='' \
+			--pointer='▌' \
+			--color='bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2' \
+			--color='hl:#e0a65b,hl+:#ffd08a,prompt:#8ecfd0,query:#f6efe2,ghost:#6d7d88' \
+			--color='border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6' \
+			--color='input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f' \
+			--color='pointer:#efbf7a,separator:#36434d,scrollbar:#55636e' \
+			--ghost='Type to filter, Enter to open, Ctrl-N to create' \
+			--input-border \
+			--input-label=' Search/New ' \
+			--list-border \
+			--list-label=' Folders ' \
+			--footer='Enter open | Ctrl-N create | Esc quit' \
+			--footer-border=line \
+			--info=hidden \
+			--delimiter=$'\t' \
+			--with-nth=2.. \
+			--query="$initial_query" \
+			--bind 'enter:accept-or-print-query' \
+			--bind 'ctrl-n:print({q})+accept' \
+			--bind 'result:transform-list-label:printf " Folders (%s) " "$FZF_MATCH_COUNT"'
 }
 
 main() {
-  local fzf_cmd selection target new_path
+	local fzf_cmd selection target new_path
 
-  fzf_cmd=$(resolve_fzf)
-  selection=$(pick_repo "$fzf_cmd") || exit 1
+	fzf_cmd=$(resolve_fzf)
+	selection=$(pick_repo "$fzf_cmd") || exit 1
 
-  if [[ -z $selection ]]; then
-    exit 1
-  fi
+	if [[ -z $selection ]]; then
+		exit 1
+	fi
 
-  if [[ $selection == *$'\t'* ]]; then
-    target=${selection%%$'\t'*}
-  else
-    validate_new_name "$selection"
-    new_path=$root/$selection
-    mkdir -p -- "$new_path"
-    target=$new_path
-  fi
+	if [[ $selection == *$'\t'* ]]; then
+		target=${selection%%$'\t'*}
+	else
+		validate_new_name "$selection"
+		new_path=$root/$selection
+		mkdir -p -- "$new_path"
+		target=$new_path
+	fi
 
-  case "$mode" in
-    print)
-      printf '%s\n' "$target"
-      ;;
-    shell)
-      cd -- "$target"
-      exec "${SHELL:-/bin/bash}" -il
-      ;;
-  esac
+	case "$mode" in
+	print)
+		printf '%s\n' "$target"
+		;;
+	shell)
+		cd -- "$target"
+		exec "${SHELL:-/bin/bash}" -il
+		;;
+	esac
 }
 
 main "$@"
