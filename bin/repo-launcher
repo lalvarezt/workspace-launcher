@@ -2,29 +2,37 @@
 
 set -euo pipefail
 
-usage() {
-	cat <<'EOF'
-Usage: repo-launcher [--print|--shell] [--query TEXT] [ROOT]
+prog_name=${0##*/}
 
-Launch an fzf-based repo picker for directories under ROOT.
-Selecting an existing entry opens that repo; submitting a new query creates it.
+usage() {
+	cat <<EOF
+Usage: $prog_name [--print|--shell] [--query TEXT] [--[no-]language] [--[no-]git] [ROOT]
+
+Launch an fzf-based directory picker for directories under ROOT.
+Selecting an existing entry opens that directory; submitting a new query creates it.
 
 Options:
-  --print       Print the selected or created path (default)
-  --shell       Start an interactive shell in the selected path
-  --query TEXT  Start with an initial query
-  -h, --help    Show this help text
+  --print          Print the selected or created path (default)
+  --shell          Start an interactive shell in the selected path
+  --query TEXT     Start with an initial query
+  --language       Show the language column (default)
+  --no-language    Hide the language column
+  --git            Show the git-state column (default)
+  --no-git         Hide the git-state column
+  -h, --help       Show this help text
 
 Environment:
-  REPO_LAUNCHER_ROOT       Default root directory (default: ~/git-repos)
-  REPO_LAUNCHER_JOBS       Parallel jobs, clamped to 1..CPU count
-  REPO_LAUNCHER_GIT_DIRTY  Show dirty repos with git* when set to 1 (default: 0)
-  REPO_LAUNCHER_RECENCY    Sort recency by directory mtime or latest git commit
+  REPO_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
+  REPO_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
+  REPO_LAUNCHER_GIT_DIRTY      Show dirty repos with git* when set to 1 (default: 0)
+  REPO_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
+  REPO_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
+  REPO_LAUNCHER_SHOW_GIT       Show the git-state column when set to 1 (default: 1)
 EOF
 }
 
 die() {
-	printf 'repo-launcher: %s\n' "$*" >&2
+	printf '%s: %s\n' "$prog_name" "$*" >&2
 	exit 1
 }
 
@@ -58,6 +66,14 @@ recency=${REPO_LAUNCHER_RECENCY:-mtime}
 if [[ $recency != git ]]; then
 	recency=mtime
 fi
+show_language=${REPO_LAUNCHER_SHOW_LANGUAGE:-1}
+if [[ $show_language != 1 ]]; then
+	show_language=0
+fi
+show_git=${REPO_LAUNCHER_SHOW_GIT:-1}
+if [[ $show_git != 1 ]]; then
+	show_git=0
+fi
 now=$(printf '%(%s)T' -1)
 cwd=$(pwd -P)
 cols=${COLUMNS:-$(tput cols 2>/dev/null || printf '120')}
@@ -70,12 +86,6 @@ lang_width=12
 lang_label_width=$((lang_width - 3))
 git_width=5
 age_width=12
-chrome_width=18
-meta_width=$((lang_width + git_width + age_width + 2 * gap_width))
-name_width=$((cols - chrome_width - meta_width))
-if ((name_width < 16)); then
-	name_width=16
-fi
 
 c_reset=$'\033[0m'
 c_dim=$'\033[38;5;244m'
@@ -106,6 +116,18 @@ while [[ $# -gt 0 ]]; do
 		[[ $# -gt 0 ]] || die "missing value for --query"
 		initial_query=$1
 		;;
+	--language)
+		show_language=1
+		;;
+	--no-language)
+		show_language=0
+		;;
+	--git)
+		show_git=1
+		;;
+	--no-git)
+		show_git=0
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -130,6 +152,19 @@ fi
 
 root=${root/#\~/$HOME}
 root=$(cd -- "$root" && pwd -P) || die "root does not exist: $root"
+
+chrome_width=18
+meta_width=$age_width
+if ((show_language)); then
+	meta_width=$((meta_width + lang_width + gap_width))
+fi
+if ((show_git)); then
+	meta_width=$((meta_width + git_width + gap_width))
+fi
+name_width=$((cols - chrome_width - meta_width))
+if ((name_width < 16)); then
+	name_width=16
+fi
 
 resolve_fzf() {
 	if [[ -n $fzf_bin ]]; then
@@ -333,8 +368,14 @@ describe_repo() {
 	epoch=$(repo_epoch "$dir")
 	age_label=$(format_age "$epoch")
 	name=${dir##*/}
-	lang=$(detect_language "$dir")
-	git_state=$(detect_git_state "$dir")
+	lang=
+	if ((show_language)); then
+		lang=$(detect_language "$dir")
+	fi
+	git_state=
+	if ((show_git)); then
+		git_state=$(detect_git_state "$dir")
+	fi
 	marker=' '
 	if is_current_repo "$dir"; then
 		marker='*'
@@ -349,16 +390,22 @@ describe_repo() {
 	fit_field "$name" "$name_width"
 	paint_field "$c_name" "$REPLY"
 	name_field=$REPLY
-	render_lang_field "$lang"
-	lang_field=$REPLY
-	render_git_field "$git_state"
-	git_field=$REPLY
 	fit_field "$age_label" "$age_width"
 	paint_field "$c_time" "$REPLY"
 	age_field=$REPLY
 
-	printf -v display '%s %s%s%s%s%s%s%s' \
-		"$marker_field" "$name_field" "$column_gap" "$lang_field" "$column_gap" "$git_field" "$column_gap" "$age_field"
+	display="$marker_field $name_field"
+	if ((show_language)); then
+		render_lang_field "$lang"
+		lang_field=$REPLY
+		display+="$column_gap$lang_field"
+	fi
+	if ((show_git)); then
+		render_git_field "$git_state"
+		git_field=$REPLY
+		display+="$column_gap$git_field"
+	fi
+	display+="$column_gap$age_field"
 
 	printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
 }
@@ -382,7 +429,7 @@ build_candidates() {
 		return
 	fi
 
-	export now cwd name_width lang_label_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
+	export now cwd name_width lang_label_width git_width age_width git_dirty recency show_language show_git column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
 	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_lang_field render_git_field describe_repo
 	printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
@@ -391,8 +438,8 @@ validate_new_name() {
 	local name=$1
 
 	[[ -n $name ]] || die "empty query"
-	[[ $name != */* ]] || die "new repo name cannot contain '/'"
-	[[ $name != '.' && $name != '..' ]] || die "invalid repo name: $name"
+	[[ $name != */* ]] || die "new directory name cannot contain '/'"
+	[[ $name != '.' && $name != '..' ]] || die "invalid directory name: $name"
 }
 
 open_in_editor() {
@@ -455,7 +502,7 @@ main() {
 
 	case "$key" in
 	ctrl-e)
-		[[ $selection == *$'\t'* ]] || die "no repo selected"
+		[[ $selection == *$'\t'* ]] || die "no directory selected"
 		target=${selection%%$'\t'*}
 		open_in_editor "$target"
 		;;
