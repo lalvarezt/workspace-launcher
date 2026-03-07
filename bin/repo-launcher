@@ -395,6 +395,13 @@ validate_new_name() {
 	[[ $name != '.' && $name != '..' ]] || die "invalid repo name: $name"
 }
 
+open_in_editor() {
+	local target=$1
+
+	[[ -n ${VISUAL:-${EDITOR:-}} ]] || die "VISUAL or EDITOR is not set"
+	exec "${BASH:-/bin/bash}" -lc 'exec ${VISUAL:-${EDITOR:-}} "$1"' sh "$target"
+}
+
 pick_repo() {
 	local fzf_cmd=$1
 
@@ -412,40 +419,60 @@ pick_repo() {
 			--color='border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6' \
 			--color='input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f' \
 			--color='pointer:#efbf7a,separator:#36434d,scrollbar:#55636e' \
-			--ghost='Type to filter, Enter to open, Ctrl-N to create' \
+			--ghost='Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create' \
 			--input-border \
 			--input-label=' Search/New ' \
 			--list-border \
 			--list-label=' Folders ' \
-			--footer='Enter open | Ctrl-N create | Esc quit' \
+			--footer='Enter open | Ctrl-E edit | Ctrl-N create | Esc quit' \
 			--footer-border=line \
 			--info=hidden \
 			--delimiter=$'\t' \
 			--with-nth=2.. \
+			--expect=ctrl-e \
 			--query="$initial_query" \
 			--bind 'enter:accept-or-print-query' \
-			--bind 'ctrl-n:print({q})+accept' \
+			--bind 'ctrl-n:print-query+accept' \
 			--bind 'result:transform-list-label:printf " Folders (%s) " "$FZF_MATCH_COUNT"'
 }
 
 main() {
-	local fzf_cmd selection target new_path
+	local fzf_cmd result key selection target new_path
 
 	fzf_cmd=$(resolve_fzf)
-	selection=$(pick_repo "$fzf_cmd") || exit 1
+	result=$(pick_repo "$fzf_cmd") || exit 1
 
-	if [[ -z $selection ]]; then
+	if [[ -z $result ]]; then
 		exit 1
 	fi
 
-	if [[ $selection == *$'\t'* ]]; then
-		target=${selection%%$'\t'*}
-	else
-		validate_new_name "$selection"
-		new_path=$root/$selection
-		mkdir -p -- "$new_path"
-		target=$new_path
+	key=
+	selection=$result
+	if [[ $result == ctrl-* ]]; then
+		key=${result%%$'\n'*}
+		selection=${result#*$'\n'}
 	fi
+
+	case "$key" in
+	ctrl-e)
+		[[ $selection == *$'\t'* ]] || die "no repo selected"
+		target=${selection%%$'\t'*}
+		open_in_editor "$target"
+		;;
+	'')
+		if [[ $selection == *$'\t'* ]]; then
+			target=${selection%%$'\t'*}
+		else
+			validate_new_name "$selection"
+			new_path=$root/$selection
+			mkdir -p -- "$new_path"
+			target=$new_path
+		fi
+		;;
+	*)
+		die "unknown key: $key"
+		;;
+	esac
 
 	case "$mode" in
 	print)
