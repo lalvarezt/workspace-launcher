@@ -1,7 +1,7 @@
 # workspace-launcher
 
 [![License](https://img.shields.io/badge/license-MIT-3d3d3d.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.0.0-cb8d43.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-v1.0.1-cb8d43.svg)](VERSION)
 [![Last Commit](https://img.shields.io/github/last-commit/lalvarezt/workspace-launcher)](https://github.com/lalvarezt/workspace-launcher/commits/main)
 [![Shell](https://img.shields.io/badge/shell-bash-2f7d32.svg)](bin/workspace-launcher)
 
@@ -11,7 +11,7 @@ activity, and lets you either jump into an existing directory or create a new
 one from the current query with `Ctrl-N`. `Ctrl-E` opens the selected
 directory in `$VISUAL` or `$EDITOR`.
 
-Current baseline release: `v1.0.0`.
+Current baseline release: `v1.0.1`.
 
 ## Install
 

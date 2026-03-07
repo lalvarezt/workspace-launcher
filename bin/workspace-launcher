@@ -5,7 +5,7 @@ set -euo pipefail
 app_name=workspace-launcher
 prog_name=${0##*/}
 # Keep this in sync with the top-level VERSION file for tagged releases.
-version='v1.0.0'
+version='v1.0.1'
 
 usage() {
 	cat <<EOF
