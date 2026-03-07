@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+prog_name=${0##*/}
+bench_marker=.workspace-launcher-bench-root
+bench_state=.workspace-launcher-bench-state
+default_root=${WORKSPACE_LAUNCHER_BENCH_ROOT:-/tmp/workspace-launcher-bench}
+default_count=${WORKSPACE_LAUNCHER_BENCH_COUNT:-1500}
+
+if stat -c %Y /tmp >/dev/null 2>&1; then
+  stat_mtime_flag='-c'
+  stat_mtime_format='%Y'
+else
+  stat_mtime_flag='-f'
+  stat_mtime_format='%m'
+fi
+
+usage() {
+  cat <<EOF
+Usage: $prog_name [--root DIR] [--count N] [--force]
+
+Create a synthetic workspace tree for performance testing.
+
+Options:
+  --root DIR   Target root directory (default: $default_root)
+  --count N    Number of direct child directories to generate (default: $default_count)
+  --force      Recreate the benchmark root from scratch
+  -h, --help   Show this help text
+
+Environment:
+  WORKSPACE_LAUNCHER_BENCH_ROOT   Default target root
+  WORKSPACE_LAUNCHER_BENCH_COUNT  Default directory count
+EOF
+}
+
+die() {
+  printf '%s: %s\n' "$prog_name" "$*" >&2
+  exit 1
+}
+
+root=$default_root
+count=$default_count
+force=0
+created=0
+skipped=0
+start_epoch=
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --root)
+    shift
+    [[ $# -gt 0 ]] || die "missing value for --root"
+    root=$1
+    ;;
+  --count)
+    shift
+    [[ $# -gt 0 ]] || die "missing value for --count"
+    count=$1
+    ;;
+  --force)
+    force=1
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    die "unknown option: $1"
+    ;;
+  esac
+  shift
+done
+
+[[ $count =~ ^[0-9]+$ ]] || die "count must be a positive integer"
+((count >= 100)) || die "count must be at least 100"
+
+set_mtime() {
+  local epoch=$1
+  shift
+
+  if touch -d "@$epoch" "$@" 2>/dev/null; then
+    return
+  fi
+
+  if date -u -r "$epoch" +%Y%m%d%H%M.%S >/dev/null 2>&1; then
+    touch -t "$(date -u -r "$epoch" +%Y%m%d%H%M.%S)" "$@"
+    return
+  fi
+
+  if date -u -d "@$epoch" +%Y%m%d%H%M.%S >/dev/null 2>&1; then
+    touch -t "$(date -u -d "@$epoch" +%Y%m%d%H%M.%S)" "$@"
+    return
+  fi
+
+  die "unable to set file timestamps on this system"
+}
+
+persist_state() {
+  cat >"$root/$bench_state" <<EOF
+fixture_count=$count
+start_epoch=$start_epoch
+EOF
+}
+
+load_state() {
+  if [[ -f $root/$bench_state ]]; then
+    # shellcheck disable=SC1090
+    source "$root/$bench_state"
+  fi
+}
+
+expected_dir() {
+  local idx=$1 archetype git_mode
+
+  read -r archetype git_mode < <(select_archetype "$idx")
+  printf '%s/%04d-%s-%s\n' "$root" "$idx" "$archetype" "$git_mode"
+}
+
+infer_start_epoch() {
+  local idx dir epoch
+
+  for ((idx = 0; idx < count; idx++)); do
+    dir=$(expected_dir "$idx")
+    [[ -d $dir ]] || continue
+    epoch=$(stat "$stat_mtime_flag" "$stat_mtime_format" "$dir" 2>/dev/null || true)
+    if [[ $epoch =~ ^[0-9]+$ ]]; then
+      printf '%s\n' $((epoch - (idx * 73)))
+      return
+    fi
+  done
+
+  printf '%s\n' "$(date +%s)"
+}
+
+prepare_root() {
+  if [[ -e $root && ! -d $root ]]; then
+    die "root exists and is not a directory: $root"
+  fi
+
+  if [[ -d $root ]]; then
+    if [[ ! -e $root/$bench_marker ]]; then
+      die "refusing to use non-benchmark directory: $root"
+    fi
+    if ((force)); then
+      rm -rf -- "$root"
+    fi
+  fi
+
+  mkdir -p -- "$root"
+  : >"$root/$bench_marker"
+
+  if [[ -f $root/$bench_state ]]; then
+    load_state
+  fi
+  if [[ -z ${start_epoch:-} ]]; then
+    start_epoch=$(infer_start_epoch)
+  fi
+  persist_state
+}
+
+create_files() {
+  local dir=$1 archetype=$2 idx=$3
+
+  case "$archetype" in
+  rust)
+    mkdir -p -- "$dir/src"
+    cat >"$dir/Cargo.toml" <<EOF
+[package]
+name = "bench-$idx"
+version = "0.1.0"
+edition = "2021"
+EOF
+    cat >"$dir/src/main.rs" <<EOF
+fn main() {
+    println!("bench-$idx");
+}
+EOF
+    ;;
+  python)
+    mkdir -p -- "$dir/src/bench_$idx"
+    cat >"$dir/pyproject.toml" <<EOF
+[project]
+name = "bench-$idx"
+version = "0.1.0"
+EOF
+    cat >"$dir/src/bench_$idx/__init__.py" <<EOF
+VALUE = $idx
+EOF
+    ;;
+  node)
+    mkdir -p -- "$dir/src"
+    cat >"$dir/package.json" <<EOF
+{"name":"bench-$idx","version":"1.0.0"}
+EOF
+    cat >"$dir/src/index.js" <<EOF
+export const value = $idx;
+EOF
+    ;;
+  go)
+    mkdir -p -- "$dir/cmd/app"
+    cat >"$dir/go.mod" <<EOF
+module example.com/bench-$idx
+
+go 1.22
+EOF
+    cat >"$dir/cmd/app/main.go" <<EOF
+package main
+
+func main() {}
+EOF
+    ;;
+  lua)
+    mkdir -p -- "$dir/lua"
+    cat >"$dir/init.lua" <<EOF
+return { value = $idx }
+EOF
+    cat >"$dir/lua/module.lua" <<EOF
+return {}
+EOF
+    ;;
+  ruby)
+    mkdir -p -- "$dir/lib"
+    cat >"$dir/Gemfile" <<EOF
+source "https://rubygems.org"
+gem "rake"
+EOF
+    cat >"$dir/lib/bench.rb" <<EOF
+module Bench
+  VALUE = $idx
+end
+EOF
+    ;;
+  nix)
+    cat >"$dir/flake.nix" <<EOF
+{
+  description = "bench-$idx";
+}
+EOF
+    cat >"$dir/default.nix" <<EOF
+{ }: { value = $idx; }
+EOF
+    ;;
+  mixed)
+    mkdir -p -- "$dir/src"
+    cat >"$dir/Cargo.toml" <<EOF
+[package]
+name = "bench-mixed-$idx"
+version = "0.1.0"
+edition = "2021"
+EOF
+    cat >"$dir/package.json" <<EOF
+{"name":"bench-mixed-$idx","private":true}
+EOF
+    cat >"$dir/src/main.rs" <<EOF
+fn main() {}
+EOF
+    ;;
+  gitonly | plain)
+    mkdir -p -- "$dir/docs"
+    cat >"$dir/README.md" <<EOF
+# bench-$idx
+EOF
+    cat >"$dir/docs/notes.txt" <<EOF
+fixture $idx
+EOF
+    ;;
+  *)
+    die "unknown archetype: $archetype"
+    ;;
+  esac
+
+  cat >"$dir/.bench-meta" <<EOF
+index=$idx
+archetype=$archetype
+EOF
+}
+
+init_git_repo() {
+  local dir=$1 idx=$2 epoch=$3 dirty=$4
+
+  git -C "$dir" init -q
+  git -C "$dir" config user.name "workspace-launcher bench"
+  git -C "$dir" config user.email "bench@example.com"
+  printf 'target/\n' >"$dir/.gitignore"
+  git -C "$dir" add .
+  GIT_AUTHOR_DATE="$epoch +0000" \
+    GIT_COMMITTER_DATE="$epoch +0000" \
+    git -C "$dir" commit -q -m "bench commit $idx"
+
+  if [[ $dirty == 1 ]]; then
+    printf 'dirty=%s\n' "$idx" >>"$dir/.bench-dirty"
+  fi
+}
+
+select_archetype() {
+  case $(($1 % 10)) in
+  0) printf 'rust clean\n' ;;
+  1) printf 'python none\n' ;;
+  2) printf 'node dirty\n' ;;
+  3) printf 'go clean\n' ;;
+  4) printf 'lua none\n' ;;
+  5) printf 'ruby dirty\n' ;;
+  6) printf 'nix clean\n' ;;
+  7) printf 'plain none\n' ;;
+  8) printf 'gitonly clean\n' ;;
+  9) printf 'mixed dirty\n' ;;
+  esac
+}
+
+fixture_complete() {
+  local idx
+
+  for ((idx = 0; idx < count; idx++)); do
+    [[ -d $(expected_dir "$idx") ]] || return 1
+  done
+
+  return 0
+}
+
+prepare_root
+
+if ((force == 0)) && fixture_complete; then
+  printf 'Fixture already exists under %s with %s directories; use --force to recreate it\n' "$root" "$count"
+  exit 0
+fi
+
+for ((i = 0; i < count; i++)); do
+  read -r archetype git_mode < <(select_archetype "$i")
+  dir=$(printf '%s/%04d-%s-%s' "$root" "$i" "$archetype" "$git_mode")
+  epoch=$((start_epoch + (i * 73)))
+
+  if [[ -d $dir ]]; then
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  mkdir -p -- "$dir"
+  create_files "$dir" "$archetype" "$i"
+
+  case "$git_mode" in
+  clean)
+    init_git_repo "$dir" "$i" "$epoch" 0
+    ;;
+  dirty)
+    init_git_repo "$dir" "$i" "$epoch" 1
+    ;;
+  none) ;;
+  *)
+    die "unknown git mode: $git_mode"
+    ;;
+  esac
+
+  set_mtime "$epoch" "$dir"
+  created=$((created + 1))
+done
+
+cat >"$root/README-bench.txt" <<EOF
+workspace-launcher benchmark fixture
+root=$root
+count=$count
+
+Example:
+  hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub ./bin/workspace-launcher --print $root >/dev/null'
+  hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub WORKSPACE_LAUNCHER_RECENCY=git ./bin/workspace-launcher --print $root >/dev/null'
+EOF
+
+persist_state
+printf 'Bench fixture ready under %s (created=%s skipped=%s total=%s)\n' "$root" "$created" "$skipped" "$count"

@@ -1,8 +1,12 @@
 SCRIPT := bin/workspace-launcher
+BENCH_SETUP := scripts/bench-setup
 VERSION := $(shell cat VERSION)
 BIN_DIR ?= $(HOME)/.local/bin
 DIST_DIR ?= dist
 RELEASE_TARGETS ?= linux_amd64 linux_arm64 darwin_amd64 darwin_arm64
+BENCH_ROOT ?= /tmp/workspace-launcher-bench
+BENCH_COUNT ?= 1500
+BENCH_ARGS ?=
 
 install:
 	dest_dir="$${XDG_BIN_HOME:-$(BIN_DIR)}"; \
@@ -45,4 +49,7 @@ release-assets:
 	} > "$(DIST_DIR)/checksums.txt"
 	rm -rf "$(DIST_DIR)/stage"
 
-.PHONY: install uninstall version release-assets
+bench-setup:
+	"$(BENCH_SETUP)" --root "$(BENCH_ROOT)" --count "$(BENCH_COUNT)" $(BENCH_ARGS)
+
+.PHONY: install uninstall version release-assets bench-setup

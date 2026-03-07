@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+query=
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --query)
+    shift
+    [[ $# -gt 0 ]] || exit 1
+    query=$1
+    ;;
+  --query=*)
+    query=${1#--query=}
+    ;;
+  esac
+  shift
+done
+
+awk -v query="$query" '
+BEGIN {
+	query = tolower(query)
+	selected = ""
+	have_query = length(query) > 0
+}
+{
+	if (selected != "") {
+		next
+	}
+	if (!have_query || index(tolower($0), query) > 0) {
+		selected = $0
+	}
+}
+END {
+	if (selected == "") {
+		exit 1
+	}
+	print selected
+}
+'

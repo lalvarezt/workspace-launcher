@@ -71,6 +71,12 @@ To build release archives locally:
 make release-assets
 ```
 
+To generate a large synthetic workspace tree for performance testing:
+
+```sh
+make bench-setup
+```
+
 ## Usage
 
 By default, `workspace-launcher` prints the selected path. That makes it easy to
@@ -141,6 +147,11 @@ Configuration is done with environment variables:
 - The launcher only scans the direct children of the selected root.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
+
+## Benchmarking
+
+Benchmark fixture setup and `hyperfine` examples live in
+[`docs/benchmarking.md`](docs/benchmarking.md).
 
 ## Acknowledgements
 
