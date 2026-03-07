@@ -48,16 +48,16 @@ This is the recommended install path when you want a packaged release asset.
 
 ## Local Install
 
-For local development or source checkouts, build the native binary with:
+For local development or source checkouts, build the native binaries with:
 
 ```sh
 make build
 ```
 
-Run the repo-local wrapper after building:
+Run the launcher directly after building:
 
 ```sh
-./bin/workspace-launcher
+./.build/workspace-launcher
 ```
 
 Install the launcher and the short alias with:

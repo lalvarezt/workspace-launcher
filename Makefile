@@ -1,8 +1,9 @@
 GO ?= go
 PACKAGE := ./cmd/workspace-launcher
+BENCH_PACKAGE := ./cmd/bench-setup
 BUILD_DIR ?= .build
 BINARY := $(BUILD_DIR)/workspace-launcher
-BENCH_SETUP := scripts/bench-setup
+BENCH_BINARY := $(BUILD_DIR)/bench-setup
 VERSION := $(shell cat VERSION)
 BIN_DIR ?= $(HOME)/.local/bin
 DIST_DIR ?= dist
@@ -15,6 +16,7 @@ LDFLAGS := -X main.version=$(VERSION)
 build:
 	mkdir -p "$(BUILD_DIR)"
 	CGO_ENABLED=0 "$(GO)" build -ldflags "$(LDFLAGS)" -o "$(BINARY)" "$(PACKAGE)"
+	CGO_ENABLED=0 "$(GO)" build -o "$(BENCH_BINARY)" "$(BENCH_PACKAGE)"
 
 install: build
 	dest_dir="$${XDG_BIN_HOME:-$(BIN_DIR)}"; \
@@ -59,10 +61,14 @@ release-assets:
 	} > "$(DIST_DIR)/checksums.txt"
 	rm -rf "$(DIST_DIR)/stage"
 
-bench-setup:
-	"$(BENCH_SETUP)" --root "$(BENCH_ROOT)" --count "$(BENCH_COUNT)" $(BENCH_ARGS)
+bench-setup: build
+	"$(BENCH_BINARY)" --root "$(BENCH_ROOT)" --count "$(BENCH_COUNT)" $(BENCH_ARGS)
+
+bench: build
+	hyperfine --warmup 3 'WORKSPACE_LAUNCHER_BENCH_MODE=headless ./.build/workspace-launcher --print $(BENCH_ROOT) >/dev/null'
+	hyperfine --warmup 3 'WORKSPACE_LAUNCHER_BENCH_MODE=headless WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher --print $(BENCH_ROOT) >/dev/null'
 
 clean:
 	rm -rf "$(BUILD_DIR)"
 
-.PHONY: build install uninstall version release-assets bench-setup clean
+.PHONY: build install uninstall version release-assets bench-setup bench clean

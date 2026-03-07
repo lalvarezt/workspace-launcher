@@ -61,17 +61,18 @@ const (
 )
 
 type config struct {
-	mode         string
-	initialQuery string
-	root         string
-	jobs         int
-	gitDirty     bool
-	recency      string
-	showLanguage bool
-	showGit      bool
-	now          int64
-	cwd          string
-	nameWidth    int
+	mode          string
+	initialQuery  string
+	root          string
+	jobs          int
+	gitDirty      bool
+	recency       string
+	showLanguage  bool
+	showGit       bool
+	headlessBench bool
+	now           int64
+	cwd           string
+	nameWidth     int
 }
 
 type childDir struct {
@@ -123,9 +124,12 @@ func run() error {
 		return err
 	}
 
-	fzfPath, err := resolveFzf()
-	if err != nil {
-		return err
+	fzfPath := ""
+	if !cfg.headlessBench {
+		fzfPath, err = resolveFzf()
+		if err != nil {
+			return err
+		}
 	}
 
 	candidates, err := buildCandidates(cfg)
@@ -176,14 +180,15 @@ func parseConfig(args []string) (config, error) {
 	root := getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos")
 	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", maxJobs), maxJobs)
 	cfg := config{
-		mode:         modePrint,
-		root:         root,
-		jobs:         jobs,
-		gitDirty:     os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
-		recency:      recencyMtime,
-		showLanguage: os.Getenv("WORKSPACE_LAUNCHER_SHOW_LANGUAGE") != "0",
-		showGit:      os.Getenv("WORKSPACE_LAUNCHER_SHOW_GIT") != "0",
-		now:          time.Now().Unix(),
+		mode:          modePrint,
+		root:          root,
+		jobs:          jobs,
+		gitDirty:      os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
+		recency:       recencyMtime,
+		showLanguage:  os.Getenv("WORKSPACE_LAUNCHER_SHOW_LANGUAGE") != "0",
+		showGit:       os.Getenv("WORKSPACE_LAUNCHER_SHOW_GIT") != "0",
+		headlessBench: os.Getenv("WORKSPACE_LAUNCHER_BENCH_MODE") == "headless",
+		now:           time.Now().Unix(),
 	}
 	if os.Getenv("WORKSPACE_LAUNCHER_RECENCY") == recencyGit {
 		cfg.recency = recencyGit
@@ -765,6 +770,10 @@ func gitIsDirty(dir string) (bool, error) {
 }
 
 func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error) {
+	if cfg.headlessBench {
+		return pickRepoHeadless(cfg, candidates)
+	}
+
 	cmd := exec.Command(
 		fzfPath,
 		"--ansi",
@@ -819,6 +828,17 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		return "", waitErr
 	}
 	return strings.TrimRight(stdout.String(), "\n"), nil
+}
+
+func pickRepoHeadless(cfg config, candidates []candidate) (string, error) {
+	query := strings.ToLower(cfg.initialQuery)
+	for _, cand := range candidates {
+		line := cand.path + "\t" + cand.display
+		if query == "" || strings.Contains(strings.ToLower(line), query) {
+			return line, nil
+		}
+	}
+	return "", exitCodeError{code: 1}
 }
 
 func writeCandidates(w io.WriteCloser, candidates []candidate) error {

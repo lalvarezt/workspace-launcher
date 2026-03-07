@@ -170,6 +170,38 @@ func TestBuildCandidatesMatchesExpectedOrdering(t *testing.T) {
 	}
 }
 
+func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
+	cfg := config{headlessBench: true}
+	candidates := []candidate{
+		{path: "/tmp/b", display: "beta"},
+		{path: "/tmp/a", display: "alpha"},
+	}
+
+	got, err := pickRepoHeadless(cfg, candidates)
+	if err != nil {
+		t.Fatalf("pickRepoHeadless returned error: %v", err)
+	}
+	if got != "/tmp/b\tbeta" {
+		t.Fatalf("unexpected selection: %q", got)
+	}
+}
+
+func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
+	cfg := config{headlessBench: true, initialQuery: "alp"}
+	candidates := []candidate{
+		{path: "/tmp/b", display: "beta"},
+		{path: "/tmp/a", display: "alpha"},
+	}
+
+	got, err := pickRepoHeadless(cfg, candidates)
+	if err != nil {
+		t.Fatalf("pickRepoHeadless returned error: %v", err)
+	}
+	if got != "/tmp/a\talpha" {
+		t.Fatalf("unexpected filtered selection: %q", got)
+	}
+}
+
 func makeDir(t *testing.T, dir string, epoch int64, marker string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
