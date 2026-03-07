@@ -17,6 +17,8 @@ Options:
 Environment:
   REPO_LAUNCHER_ROOT  Default root directory (default: ~/git-repos)
   REPO_LAUNCHER_JOBS  Parallel jobs (default: CPU count, clamped to 1..CPU count)
+  REPO_LAUNCHER_GIT_DIRTY  Show dirty repos with git* when set to 1 (default: 0)
+  REPO_LAUNCHER_RECENCY  Recency source: git or mtime (default: git)
 EOF
 }
 
@@ -45,11 +47,20 @@ elif ((jobs < 1)); then
 elif ((jobs > max_jobs)); then
   jobs=$max_jobs
 fi
+git_dirty=${REPO_LAUNCHER_GIT_DIRTY:-0}
+if [[ $git_dirty != 1 ]]; then
+  git_dirty=0
+fi
+recency=${REPO_LAUNCHER_RECENCY:-git}
+if [[ $recency != mtime ]]; then
+  recency=git
+fi
 now=$(printf '%(%s)T' -1)
 cwd=$(pwd -P)
 cols=${COLUMNS:-$(tput cols 2> /dev/null || printf '120')}
 [[ $cols =~ ^[0-9]+$ ]] || cols=120
-name_width=$((cols - 52))
+column_gap='   '
+name_width=$((cols - 58))
 if ((name_width < 18)); then
   name_width=18
 elif ((name_width > 60)); then
@@ -150,6 +161,11 @@ detect_git_state() {
     return
   fi
 
+  if ((git_dirty == 0)); then
+    printf 'git'
+    return
+  fi
+
   if [[ -n $(git -C "$dir" status --porcelain --untracked-files=normal 2> /dev/null) ]]; then
     printf 'git*'
   else
@@ -159,6 +175,11 @@ detect_git_state() {
 
 repo_epoch() {
   local dir=$1 epoch
+
+  if [[ $recency == mtime || ! -e $dir/.git ]]; then
+    stat -c %Y "$dir"
+    return
+  fi
 
   epoch=$(git -C "$dir" -c log.showSignature=false log -1 --format=%ct 2> /dev/null || true)
   if [[ -n $epoch ]]; then
@@ -208,8 +229,8 @@ describe_repo() {
   fit_field "$name" "$name_width"
   fitted_name=$REPLY
 
-  printf -v display '%s %s %-8s %-4s %s (%s)' \
-    "$marker" "$fitted_name" "$lang" "$git_state" "$date_label" "$age_label"
+  printf -v display '%s %s%s%-8s%s%-4s%s%s (%s)' \
+    "$marker" "$fitted_name" "$column_gap" "$lang" "$column_gap" "$git_state" "$column_gap" "$date_label" "$age_label"
 
   printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
 }
@@ -233,7 +254,7 @@ build_candidates() {
     return
   fi
 
-  export now cwd name_width
+  export now cwd name_width git_dirty recency column_gap
   export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field describe_repo
   printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
