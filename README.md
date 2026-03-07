@@ -29,7 +29,7 @@ trees such as `~/.config` or `~/src`.
 - Inline metadata for age, detected language, and git state.
 - `Ctrl-N` creates a new directory from the active query.
 - `Ctrl-E` opens the selected directory in `$VISUAL` or `$EDITOR`.
-- Supports native bash, zsh, and fish shell integration, plus a shell-evaluable fallback.
+- Supports native bash, zsh, and fish shell integration.
 
 ## Requirements
 
@@ -66,19 +66,13 @@ workspace-launcher --fish | source
 Each integration defines `workspace-launcher-cd` and binds `Ctrl-G` to open the
 picker and `cd` directly in the current shell session.
 
-The shell scripts also live in [shell/key-bindings.bash](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.bash), [shell/key-bindings.zsh](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.zsh), and [shell/key-bindings.fish](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.fish), mirroring `fzf`'s layout.
+The shell scripts also live in [shell/key-bindings.bash](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.bash), [shell/key-bindings.zsh](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.zsh), and [shell/key-bindings.fish](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.fish), mirroring `fzf`'s layout. Those files are the source templates; use `--bash`, `--zsh`, or `--fish` to emit a script with the correct binary path prelude.
 
 Rebind it with normal shell commands after sourcing:
 
 ```fish
 bind --erase \cg
 bind \eg workspace-launcher-widget
-```
-
-Use the manual shell-safe fallback when you do want explicit output:
-
-```sh
-eval "$(workspace-launcher --shell)"
 ```
 
 Search under a different root:
@@ -126,13 +120,12 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 ## CLI Options
 
 ```text
-Usage: workspace-launcher [--shell|--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+Usage: workspace-launcher [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 ```
 
 - `--bash`: print bash shell integration
 - `--zsh`: print zsh shell integration
 - `--fish`: print fish shell integration
-- `--shell`: print a shell command that `cd`s into the selected or created path
 - `--query TEXT`: start with an initial query
 - `--language` / `--no-language`: show or hide the language column
 - `--git` / `--no-git`: show or hide the git-state column

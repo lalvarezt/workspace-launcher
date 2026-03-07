@@ -1,7 +1,5 @@
 # workspace-launcher fish integration
 
-set -q __workspace_launcher_bin; or set -g __workspace_launcher_bin workspace-launcher
-
 function workspace-launcher-cd --description 'Change directory with workspace-launcher'
     set -l query ''
     if status --is-interactive

@@ -1,8 +1,6 @@
 # workspace-launcher bash integration
 
 if [[ $- =~ i ]]; then
-  : "${__workspace_launcher_bin:=workspace-launcher}"
-
   workspace-launcher-cd() {
     local dir
     dir="$("$__workspace_launcher_bin" "$@")" || return
@@ -20,9 +18,7 @@ if [[ $- =~ i ]]; then
     READLINE_POINT=0
   }
 
-  if (( BASH_VERSINFO[0] >= 4 )); then
-    bind -m emacs-standard -x '"\C-g": workspace-launcher-widget'
-    bind -m vi-command -x '"\C-g": workspace-launcher-widget'
-    bind -m vi-insert -x '"\C-g": workspace-launcher-widget'
-  fi
+  bind -m emacs-standard -x '"\C-g": workspace-launcher-widget'
+  bind -m vi-command -x '"\C-g": workspace-launcher-widget'
+  bind -m vi-insert -x '"\C-g": workspace-launcher-widget'
 fi

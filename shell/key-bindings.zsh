@@ -1,8 +1,6 @@
 # workspace-launcher zsh integration
 
 if [[ -o interactive ]]; then
-  : "${__workspace_launcher_bin:=workspace-launcher}"
-
   workspace-launcher-cd() {
     emulate -L zsh -o no_aliases
     local dir

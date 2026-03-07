@@ -232,15 +232,6 @@ func TestParseConfigRejectsPrintFlag(t *testing.T) {
 	}
 }
 
-func TestRenderShellCommandQuotesPath(t *testing.T) {
-	target := "/tmp/ab'cd"
-	got := renderShellCommand(target)
-	want := "cd -- '/tmp/ab'\\''cd'"
-	if got != want {
-		t.Fatalf("unexpected shell command: got %q want %q", got, want)
-	}
-}
-
 func TestParseConfigShellIntegrationModeSkipsRootResolution(t *testing.T) {
 	t.Setenv("WORKSPACE_LAUNCHER_ROOT", "/path/that/does/not/exist")
 
@@ -261,8 +252,8 @@ func TestOutputsShellIntegration(t *testing.T) {
 			t.Fatalf("expected %q to be recognized as shell integration mode", mode)
 		}
 	}
-	if outputsShellIntegration(modeShell) {
-		t.Fatal("did not expect --shell fallback mode to be treated as native integration")
+	if outputsShellIntegration(modePath) {
+		t.Fatal("did not expect default path mode to be treated as native integration")
 	}
 }
 

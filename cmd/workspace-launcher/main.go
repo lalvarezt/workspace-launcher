@@ -27,11 +27,10 @@ const appName = "workspace-launcher"
 var version = "dev"
 
 const (
-	modePath  = "path"
-	modeShell = "shell"
-	modeBash  = "bash"
-	modeZsh   = "zsh"
-	modeFish  = "fish"
+	modePath = "path"
+	modeBash = "bash"
+	modeZsh  = "zsh"
+	modeFish = "fish"
 
 	recencyMtime = "mtime"
 	recencyGit   = "git"
@@ -170,17 +169,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-
-	switch cfg.mode {
-	case modePath:
-		_, err = fmt.Fprintln(os.Stdout, target)
-		return err
-	case modeShell:
-		_, err = fmt.Fprintln(os.Stdout, renderShellCommand(target))
-		return err
-	default:
-		return fmt.Errorf("unknown mode: %s", cfg.mode)
-	}
+	_, err = fmt.Fprintln(os.Stdout, target)
+	return err
 }
 
 func parseConfig(args []string) (config, error) {
@@ -210,8 +200,6 @@ func parseConfig(args []string) (config, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "--shell":
-			cfg.mode = modeShell
 		case arg == "--bash":
 			cfg.mode = modeBash
 		case arg == "--zsh":
@@ -262,48 +250,49 @@ func parseConfig(args []string) (config, error) {
 		}
 	}
 
-	if !outputsShellIntegration(cfg.mode) {
-		resolvedRoot, err := resolveRoot(cfg.root)
-		if err != nil {
-			return config{}, err
-		}
-		cfg.root = resolvedRoot
+	if outputsShellIntegration(cfg.mode) {
+		return cfg, nil
+	}
 
-		cwd, err := os.Getwd()
-		if err != nil {
-			return config{}, err
-		}
-		if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
-			cfg.cwd = resolvedCwd
-		} else {
-			cfg.cwd = cwd
-		}
+	resolvedRoot, err := resolveRoot(cfg.root)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.root = resolvedRoot
 
-		cols := parsePositiveEnvInt("COLUMNS", 120)
-		metaWidth := ageWidth
-		if cfg.showLanguage {
-			metaWidth += langWidth + gapWidth
-		}
-		if cfg.showGit {
-			metaWidth += gitWidth + gapWidth
-		}
-		cfg.nameWidth = cols - chromeWidth - metaWidth
-		if cfg.nameWidth < 16 {
-			cfg.nameWidth = 16
-		}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return config{}, err
+	}
+	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
+		cfg.cwd = resolvedCwd
+	} else {
+		cfg.cwd = cwd
+	}
+
+	cols := parsePositiveEnvInt("COLUMNS", 120)
+	metaWidth := ageWidth
+	if cfg.showLanguage {
+		metaWidth += langWidth + gapWidth
+	}
+	if cfg.showGit {
+		metaWidth += gitWidth + gapWidth
+	}
+	cfg.nameWidth = cols - chromeWidth - metaWidth
+	if cfg.nameWidth < 16 {
+		cfg.nameWidth = 16
 	}
 
 	return cfg, nil
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stdout, `Usage: %s [--shell|--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 
 Launch an fzf-based directory picker for directories under ROOT.
 Selecting an existing entry opens that directory; submitting a new query creates it.
 
 Options:
-  --shell          Print a shell command that cds into the selected path
   --bash           Print bash shell integration
   --zsh            Print zsh shell integration
   --fish           Print fish shell integration
@@ -937,10 +926,6 @@ func openInEditor(target string) error {
 	return syscall.Exec(shell, []string{shell, "-lc", `exec ${VISUAL:-${EDITOR:-}} "$1"`, "sh", target}, os.Environ())
 }
 
-func renderShellCommand(target string) string {
-	return "cd -- " + shellQuote(target)
-}
-
 func outputsShellIntegration(mode string) bool {
 	switch mode {
 	case modeBash, modeZsh, modeFish:
@@ -972,13 +957,6 @@ func renderShellIntegrationForPath(mode, binPath string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown shell integration mode: %s", mode)
 	}
-}
-
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func resolveFzf() (string, error) {
