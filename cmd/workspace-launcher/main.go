@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"errors"
 	"fmt"
 	"io"
@@ -445,7 +446,7 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 
 	epoch := child.modEpoch
 	if cfg.recency == recencyGit && facts.hasGit {
-		if gitEpoch, err := gitLastCommitEpoch(child.path); err == nil && gitEpoch > 0 {
+		if gitEpoch, err := gitLastCommitEpochFast(child.path); err == nil && gitEpoch > 0 {
 			epoch = gitEpoch
 		}
 	}
@@ -528,7 +529,20 @@ func detectGitState(cfg config, dir string, hasGit bool) string {
 	return "git"
 }
 
-func gitLastCommitEpoch(dir string) (int64, error) {
+func gitLastCommitEpochFast(dir string) (int64, error) {
+	gitDir, err := resolveGitDir(dir)
+	if err == nil {
+		headHash, resolveErr := resolveHeadHash(gitDir)
+		if resolveErr == nil {
+			if epoch, readErr := readCommitEpoch(gitDir, headHash); readErr == nil && epoch > 0 {
+				return epoch, nil
+			}
+		}
+	}
+	return gitLastCommitEpochSlow(dir)
+}
+
+func gitLastCommitEpochSlow(dir string) (int64, error) {
 	cmd := exec.Command("git", "-C", dir, "-c", "log.showSignature=false", "log", "-1", "--format=%ct")
 	output, err := cmd.Output()
 	if err != nil {
@@ -543,6 +557,131 @@ func gitLastCommitEpoch(dir string) (int64, error) {
 		return 0, err
 	}
 	return epoch, nil
+}
+
+func resolveGitDir(dir string) (string, error) {
+	gitPath := filepath.Join(dir, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return gitPath, nil
+	}
+
+	content, err := os.ReadFile(gitPath)
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(string(content))
+	const prefix = "gitdir: "
+	if !strings.HasPrefix(line, prefix) {
+		return "", errors.New("unsupported .git file format")
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	return filepath.Clean(gitDir), nil
+}
+
+func resolveHeadHash(gitDir string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(string(content))
+	if head == "" {
+		return "", errors.New("empty HEAD")
+	}
+	if !strings.HasPrefix(head, "ref: ") {
+		return head, nil
+	}
+
+	refName := strings.TrimSpace(strings.TrimPrefix(head, "ref: "))
+	refPath := filepath.Join(gitDir, filepath.FromSlash(refName))
+	if refValue, err := os.ReadFile(refPath); err == nil {
+		hash := strings.TrimSpace(string(refValue))
+		if hash != "" {
+			return hash, nil
+		}
+	}
+
+	return lookupPackedRef(gitDir, refName)
+}
+
+func lookupPackedRef(gitDir, refName string) (string, error) {
+	file, err := os.Open(filepath.Join(gitDir, "packed-refs"))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" || line[0] == '#' || line[0] == '^' {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		if fields[1] == refName {
+			return fields[0], nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", errors.New("ref not found")
+}
+
+func readCommitEpoch(gitDir, hash string) (int64, error) {
+	if len(hash) < 40 {
+		return 0, errors.New("invalid commit hash")
+	}
+
+	objectPath := filepath.Join(gitDir, "objects", hash[:2], hash[2:])
+	file, err := os.Open(objectPath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	reader, err := zlib.NewReader(file)
+	if err != nil {
+		return 0, err
+	}
+	defer reader.Close()
+
+	buf := bufio.NewReaderSize(reader, 1024)
+	if _, err := buf.ReadBytes(0); err != nil {
+		return 0, errors.New("invalid object header")
+	}
+
+	for {
+		line, err := buf.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		if strings.HasPrefix(line, "committer ") {
+			fields := strings.Fields(strings.TrimSpace(line))
+			if len(fields) < 3 {
+				break
+			}
+			epoch, parseErr := strconv.ParseInt(fields[len(fields)-2], 10, 64)
+			if parseErr != nil {
+				return 0, parseErr
+			}
+			return epoch, nil
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+	}
+
+	return 0, errors.New("committer line not found")
 }
 
 func gitIsDirty(dir string) (bool, error) {

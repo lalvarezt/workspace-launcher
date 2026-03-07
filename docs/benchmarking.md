@@ -25,3 +25,6 @@ make build
 hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub ./.build/workspace-launcher --print /tmp/workspace-launcher-bench >/dev/null'
 hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher --print /tmp/workspace-launcher-bench >/dev/null'
 ```
+
+The stored pre-optimization reference for March 7, 2026 lives in
+[`docs/performance-baseline.md`](performance-baseline.md).
