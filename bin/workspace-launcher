@@ -44,6 +44,13 @@ die() {
 # the repo you are currently working in.
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(cd -- "$script_dir/.." && pwd -P)
+if stat -c %Y "$repo_root" >/dev/null 2>&1; then
+	stat_mtime_flag='-c'
+	stat_mtime_format='%Y'
+else
+	stat_mtime_flag='-f'
+	stat_mtime_format='%m'
+fi
 
 fzf_bin=${FZF_BIN:-}
 mode=print
@@ -246,7 +253,7 @@ repo_epoch() {
 	local dir=$1 epoch
 
 	if [[ $recency == mtime || ! -e $dir/.git ]]; then
-		stat -c %Y "$dir"
+		stat "$stat_mtime_flag" "$stat_mtime_format" "$dir"
 		return
 	fi
 
@@ -254,7 +261,7 @@ repo_epoch() {
 	if [[ -n $epoch ]]; then
 		printf '%s\n' "$epoch"
 	else
-		stat -c %Y "$dir"
+		stat "$stat_mtime_flag" "$stat_mtime_format" "$dir"
 	fi
 }
 
@@ -437,7 +444,7 @@ build_candidates() {
 		return
 	fi
 
-	export now cwd name_width lang_label_width git_width age_width git_dirty recency show_language show_git column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
+	export now cwd name_width lang_label_width git_width age_width git_dirty recency show_language show_git column_gap stat_mtime_flag stat_mtime_format c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
 	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_lang_field render_git_field describe_repo
 	printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
