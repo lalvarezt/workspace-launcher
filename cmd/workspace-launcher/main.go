@@ -304,8 +304,7 @@ Options:
 
 Shell integration:
   bash/zsh         Load with source <(workspace-launcher --bash|--zsh)
-                   or eval "$(workspace-launcher --bash|--zsh)"
-                   Do not use eval <(...).
+                   or workspace-launcher --fish | source
 
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
