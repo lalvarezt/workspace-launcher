@@ -80,9 +80,6 @@ Install from the local checkout into a custom bin dir:
 GOBIN="${XDG_BIN_HOME:-$HOME/.local/bin}" go install ./cmd/workspace-launcher
 ```
 
-Release archives are built and published by the GitHub release workflow when a
-`v*` tag is pushed.
-
 To generate a large synthetic workspace tree for performance testing:
 
 ```sh
