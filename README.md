@@ -29,6 +29,18 @@ This installs:
 By default both commands go to `${XDG_BIN_HOME:-$HOME/.local/bin}`. Override the
 target with `XDG_BIN_HOME=/some/bin make install` or `BIN_DIR=/some/bin make install`.
 
+To build the assets locally:
+
+```sh
+make release-assets
+```
+
+Example install with `eget`:
+
+```sh
+eget lalvarezt/workspace-launcher
+```
+
 ## Usage
 
 Examples:

@@ -1,0 +1,64 @@
+name: Release Assets
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to package and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          git rev-parse "refs/tags/$tag" >/dev/null 2>&1 || {
+            printf 'Tag %s does not exist\n' "$tag" >&2
+            exit 1
+          }
+
+          git checkout --detach "refs/tags/$tag"
+
+          version="$(cat VERSION)"
+          if [[ "$tag" != "$version" ]]; then
+            printf 'Tag %s does not match VERSION %s\n' "$tag" "$version" >&2
+            exit 1
+          fi
+
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build release assets
+        run: make release-assets
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          overwrite_files: true
