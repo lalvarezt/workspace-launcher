@@ -6,7 +6,10 @@ activity, and lets you either jump into an existing directory or create a new
 one from the current query with `Ctrl-N`. `Ctrl-E` opens the selected
 directory in `$VISUAL` or `$EDITOR`.
 
-`make install` exposes two command names:
+The checked-in launcher is `bin/workspace-launcher`. To create the short alias,
+run `make -C bin install`.
+
+This exposes two command names:
 
 - `bin/workspace-launcher`
 - `bin/wl`
