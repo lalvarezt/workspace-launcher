@@ -101,6 +101,11 @@ type dirFacts struct {
 	hasDefaultNix   bool
 }
 
+type gitLayout struct {
+	gitDir    string
+	commonDir string
+}
+
 func main() {
 	if err := run(); err != nil {
 		var exitErr exitCodeError
@@ -540,11 +545,11 @@ func detectGitState(cfg config, dir string, hasGit bool) string {
 }
 
 func gitLastCommitEpochFast(dir string) (int64, error) {
-	gitDir, err := resolveGitDir(dir)
+	layout, err := resolveGitLayout(dir)
 	if err == nil {
-		headHash, resolveErr := resolveHeadHash(gitDir)
+		headHash, resolveErr := resolveHeadHash(layout)
 		if resolveErr == nil {
-			if epoch, readErr := readCommitEpoch(gitDir, headHash); readErr == nil && epoch > 0 {
+			if epoch, readErr := readCommitEpoch(layout, headHash); readErr == nil && epoch > 0 {
 				return epoch, nil
 			}
 		}
@@ -569,34 +574,58 @@ func gitLastCommitEpochSlow(dir string) (int64, error) {
 	return epoch, nil
 }
 
-func resolveGitDir(dir string) (string, error) {
+func resolveGitLayout(dir string) (gitLayout, error) {
 	gitPath := filepath.Join(dir, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
-		return "", err
+		return gitLayout{}, err
 	}
+	gitDir := gitPath
 	if info.IsDir() {
-		return gitPath, nil
+		return finalizeGitLayout(gitDir)
 	}
 
 	content, err := os.ReadFile(gitPath)
 	if err != nil {
-		return "", err
+		return gitLayout{}, err
 	}
 	line := strings.TrimSpace(string(content))
 	const prefix = "gitdir: "
 	if !strings.HasPrefix(line, prefix) {
-		return "", errors.New("unsupported .git file format")
+		return gitLayout{}, errors.New("unsupported .git file format")
 	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	gitDir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(dir, gitDir)
 	}
-	return filepath.Clean(gitDir), nil
+	return finalizeGitLayout(filepath.Clean(gitDir))
 }
 
-func resolveHeadHash(gitDir string) (string, error) {
-	content, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+func finalizeGitLayout(gitDir string) (gitLayout, error) {
+	layout := gitLayout{
+		gitDir:    gitDir,
+		commonDir: gitDir,
+	}
+	content, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return layout, nil
+		}
+		return gitLayout{}, err
+	}
+	commonDir := strings.TrimSpace(string(content))
+	if commonDir == "" {
+		return layout, nil
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(gitDir, commonDir)
+	}
+	layout.commonDir = filepath.Clean(commonDir)
+	return layout, nil
+}
+
+func resolveHeadHash(layout gitLayout) (string, error) {
+	content, err := os.ReadFile(filepath.Join(layout.gitDir, "HEAD"))
 	if err != nil {
 		return "", err
 	}
@@ -609,19 +638,34 @@ func resolveHeadHash(gitDir string) (string, error) {
 	}
 
 	refName := strings.TrimSpace(strings.TrimPrefix(head, "ref: "))
-	refPath := filepath.Join(gitDir, filepath.FromSlash(refName))
-	if refValue, err := os.ReadFile(refPath); err == nil {
-		hash := strings.TrimSpace(string(refValue))
-		if hash != "" {
-			return hash, nil
+	for _, baseDir := range []string{layout.gitDir, layout.commonDir} {
+		refPath := filepath.Join(baseDir, filepath.FromSlash(refName))
+		if refValue, err := os.ReadFile(refPath); err == nil {
+			hash := strings.TrimSpace(string(refValue))
+			if hash != "" {
+				return hash, nil
+			}
 		}
 	}
 
-	return lookupPackedRef(gitDir, refName)
+	return lookupPackedRef(layout, refName)
 }
 
-func lookupPackedRef(gitDir, refName string) (string, error) {
-	file, err := os.Open(filepath.Join(gitDir, "packed-refs"))
+func lookupPackedRef(layout gitLayout, refName string) (string, error) {
+	for _, baseDir := range []string{layout.gitDir, layout.commonDir} {
+		hash, err := lookupPackedRefFile(filepath.Join(baseDir, "packed-refs"), refName)
+		if err == nil {
+			return hash, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", errors.New("ref not found")
+}
+
+func lookupPackedRefFile(path, refName string) (string, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -647,12 +691,29 @@ func lookupPackedRef(gitDir, refName string) (string, error) {
 	return "", errors.New("ref not found")
 }
 
-func readCommitEpoch(gitDir, hash string) (int64, error) {
+func readCommitEpoch(layout gitLayout, hash string) (int64, error) {
 	if len(hash) < 40 {
 		return 0, errors.New("invalid commit hash")
 	}
 
-	objectPath := filepath.Join(gitDir, "objects", hash[:2], hash[2:])
+	objectDirs := []string{
+		filepath.Join(layout.gitDir, "objects"),
+		filepath.Join(layout.commonDir, "objects"),
+	}
+	for _, objectDir := range objectDirs {
+		epoch, err := readCommitEpochFromObjects(objectDir, hash)
+		if err == nil {
+			return epoch, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return 0, err
+		}
+	}
+	return 0, os.ErrNotExist
+}
+
+func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
+	objectPath := filepath.Join(objectDir, hash[:2], hash[2:])
 	file, err := os.Open(objectPath)
 	if err != nil {
 		return 0, err

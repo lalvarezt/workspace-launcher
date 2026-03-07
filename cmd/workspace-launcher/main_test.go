@@ -59,19 +59,38 @@ func TestGitLastCommitEpochFastDetachedHead(t *testing.T) {
 	}
 }
 
-func TestResolveGitDirWorktree(t *testing.T) {
+func TestResolveGitLayoutWorktree(t *testing.T) {
 	repo := initTestRepo(t)
 	commitAt(t, repo, "1700000300", "base")
 
 	worktree := filepath.Join(t.TempDir(), "wt")
 	runGit(t, repo, "worktree", "add", worktree)
 
-	gitDir, err := resolveGitDir(worktree)
+	layout, err := resolveGitLayout(worktree)
 	if err != nil {
-		t.Fatalf("resolveGitDir returned error: %v", err)
+		t.Fatalf("resolveGitLayout returned error: %v", err)
 	}
-	if !strings.Contains(gitDir, filepath.Join(".git", "worktrees")) {
-		t.Fatalf("unexpected worktree git dir: %s", gitDir)
+	if !strings.Contains(layout.gitDir, filepath.Join(".git", "worktrees")) {
+		t.Fatalf("unexpected worktree git dir: %s", layout.gitDir)
+	}
+	if layout.commonDir == layout.gitDir {
+		t.Fatalf("expected worktree commonDir to differ from gitDir")
+	}
+}
+
+func TestGitLastCommitEpochFastWorktree(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", worktree)
+
+	epoch, err := gitLastCommitEpochFast(worktree)
+	if err != nil {
+		t.Fatalf("gitLastCommitEpochFast returned error: %v", err)
+	}
+	if epoch != 1700000300 {
+		t.Fatalf("unexpected epoch: got %d want %d", epoch, 1700000300)
 	}
 }
 
