@@ -11,8 +11,6 @@ activity, and lets you either jump into an existing directory or create a new
 one from the current query with `Ctrl-N`. `Ctrl-E` opens the selected
 directory in `$VISUAL` or `$EDITOR`.
 
-Current baseline release: `v1.0.2`.
-
 ## Install
 
 Run:
