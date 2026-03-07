@@ -426,7 +426,7 @@ describe_repo() {
 }
 
 build_candidates() {
-	local dir
+	local dir batch_size
 	local -a dirs=()
 
 	shopt -s nullglob
@@ -444,9 +444,19 @@ build_candidates() {
 		return
 	fi
 
+	batch_size=$(((${#dirs[@]} + (jobs * 4) - 1) / (jobs * 4)))
+	if ((batch_size < 1)); then
+		batch_size=1
+	fi
+
 	export now cwd name_width lang_label_width git_width age_width git_dirty recency show_language show_git column_gap stat_mtime_flag stat_mtime_format c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
 	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_lang_field render_git_field describe_repo
-	printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
+	printf '%s\0' "${dirs[@]}" | xargs -0 -n"$batch_size" -P "$jobs" bash -c '
+		dir=
+		for dir in "$@"; do
+			describe_repo "$dir"
+		done
+	' _
 }
 
 validate_new_name() {
