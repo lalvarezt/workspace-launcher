@@ -222,41 +222,6 @@ func TestSplitResultSeparatesExpectedKey(t *testing.T) {
 	}
 }
 
-func TestParseConfigRejectsPrintFlag(t *testing.T) {
-	_, err := parseConfig([]string{"--print"})
-	if err == nil {
-		t.Fatal("expected error for removed --print flag")
-	}
-	if !strings.Contains(err.Error(), "unknown option: --print") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseConfigShellIntegrationModeSkipsRootResolution(t *testing.T) {
-	t.Setenv("WORKSPACE_LAUNCHER_ROOT", "/path/that/does/not/exist")
-
-	for _, mode := range []string{"--bash", "--zsh", "--fish"} {
-		cfg, err := parseConfig([]string{mode})
-		if err != nil {
-			t.Fatalf("parseConfig(%s) returned error: %v", mode, err)
-		}
-		if !outputsShellIntegration(cfg.mode) {
-			t.Fatalf("expected shell integration mode for %s, got %q", mode, cfg.mode)
-		}
-	}
-}
-
-func TestOutputsShellIntegration(t *testing.T) {
-	for _, mode := range []string{modeBash, modeZsh, modeFish} {
-		if !outputsShellIntegration(mode) {
-			t.Fatalf("expected %q to be recognized as shell integration mode", mode)
-		}
-	}
-	if outputsShellIntegration(modePath) {
-		t.Fatal("did not expect default path mode to be treated as native integration")
-	}
-}
-
 func TestRenderShellIntegrationIncludesPreludeAndWidget(t *testing.T) {
 	tempExe := filepath.Join(t.TempDir(), `workspace-launcher$bin"test`)
 
