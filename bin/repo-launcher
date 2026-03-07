@@ -18,7 +18,7 @@ Environment:
   REPO_LAUNCHER_ROOT  Default root directory (default: ~/git-repos)
   REPO_LAUNCHER_JOBS  Parallel jobs (default: CPU count, clamped to 1..CPU count)
   REPO_LAUNCHER_GIT_DIRTY  Show dirty repos with git* when set to 1 (default: 0)
-  REPO_LAUNCHER_RECENCY  Recency source: git or mtime (default: git)
+  REPO_LAUNCHER_RECENCY  Recency source: mtime or git (default: mtime)
 EOF
 }
 
@@ -51,9 +51,9 @@ git_dirty=${REPO_LAUNCHER_GIT_DIRTY:-0}
 if [[ $git_dirty != 1 ]]; then
   git_dirty=0
 fi
-recency=${REPO_LAUNCHER_RECENCY:-git}
-if [[ $recency != mtime ]]; then
-  recency=git
+recency=${REPO_LAUNCHER_RECENCY:-mtime}
+if [[ $recency != git ]]; then
+  recency=mtime
 fi
 now=$(printf '%(%s)T' -1)
 cwd=$(pwd -P)
@@ -62,7 +62,8 @@ cols=${COLUMNS:-$(tput cols 2> /dev/null || printf '120')}
 column_gap='   '
 gap_width=3
 lang_width=12
-git_width=8
+lang_label_width=$((lang_width - 3))
+git_width=5
 age_width=12
 chrome_width=18
 meta_width=$((lang_width + git_width + age_width + 2 * gap_width))
@@ -246,45 +247,62 @@ render_name_field() {
 }
 
 render_lang_field() {
-  local lang=$1 plain color
+  local lang=$1 icon label color icon_cell
 
   case "$lang" in
     Go)
-      plain=' Go'
+      icon=''
+      label='Go'
       color=$c_go
       ;;
     Rust)
-      plain=' Rust'
+      icon=''
+      label='Rust'
       color=$c_rust
       ;;
     Python)
-      plain=' Python'
+      icon=''
+      label='Python'
       color=$c_python
       ;;
     Node)
-      plain=' Node'
+      icon=''
+      label='Node'
       color=$c_node
       ;;
     Lua)
-      plain=' Lua'
+      icon=''
+      label='Lua'
       color=$c_lua
       ;;
     Ruby)
-      plain=' Ruby'
+      icon=''
+      label='Ruby'
       color=$c_ruby
       ;;
     Nix)
-      plain=' Nix'
+      icon=''
+      label='Nix'
       color=$c_nix
       ;;
     *)
-      plain='󰈔 Misc'
+      icon='•'
+      label='Misc'
       color=$c_misc
       ;;
   esac
 
-  fit_field "$plain" "$lang_width"
-  paint_field "$color" "$REPLY"
+  case "$icon" in
+    '•')
+      icon_cell='•  '
+      ;;
+    *)
+      icon_cell="$icon  "
+      ;;
+  esac
+
+  fit_field "$label" "$lang_label_width"
+  paint_field "$color" "$icon_cell$REPLY"
 }
 
 render_git_field() {
@@ -292,15 +310,15 @@ render_git_field() {
 
   case "$state" in
     git)
-      plain=' git'
+      plain='git'
       color=$c_git
       ;;
     git*)
-      plain=' git*'
+      plain='git*'
       color=$c_git_dirty
       ;;
     *)
-      plain='󰈔 -'
+      plain='-'
       color=$c_dim
       ;;
   esac
@@ -375,7 +393,7 @@ build_candidates() {
     return
   fi
 
-  export now cwd name_width lang_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
+  export now cwd name_width lang_width lang_label_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
   export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_name_field render_lang_field render_git_field render_age_field render_marker_field describe_repo
   printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
