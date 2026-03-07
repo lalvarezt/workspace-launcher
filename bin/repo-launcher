@@ -60,12 +60,32 @@ cwd=$(pwd -P)
 cols=${COLUMNS:-$(tput cols 2> /dev/null || printf '120')}
 [[ $cols =~ ^[0-9]+$ ]] || cols=120
 column_gap='   '
-name_width=$((cols - 58))
-if ((name_width < 18)); then
-  name_width=18
-elif ((name_width > 60)); then
-  name_width=60
+gap_width=3
+lang_width=12
+git_width=8
+age_width=12
+chrome_width=18
+meta_width=$((lang_width + git_width + age_width + 2 * gap_width))
+name_width=$((cols - chrome_width - meta_width))
+if ((name_width < 16)); then
+  name_width=16
 fi
+
+c_reset=$'\033[0m'
+c_dim=$'\033[38;5;244m'
+c_name=$'\033[38;5;252m'
+c_current=$'\033[38;5;223m'
+c_go=$'\033[38;5;81m'
+c_rust=$'\033[38;5;209m'
+c_python=$'\033[38;5;221m'
+c_node=$'\033[38;5;78m'
+c_lua=$'\033[38;5;111m'
+c_ruby=$'\033[38;5;203m'
+c_nix=$'\033[38;5;110m'
+c_misc=$'\033[38;5;180m'
+c_git=$'\033[38;5;109m'
+c_git_dirty=$'\033[38;5;215m'
+c_time=$'\033[38;5;246m'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -212,11 +232,104 @@ fit_field() {
   printf -v REPLY '%-*s' "$width" "$trimmed..."
 }
 
+paint_field() {
+  local color=$1 text=$2
+
+  REPLY=${color}${text}${c_reset}
+}
+
+render_name_field() {
+  local name=$1
+
+  fit_field "$name" "$name_width"
+  paint_field "$c_name" "$REPLY"
+}
+
+render_lang_field() {
+  local lang=$1 plain color
+
+  case "$lang" in
+    Go)
+      plain=' Go'
+      color=$c_go
+      ;;
+    Rust)
+      plain=' Rust'
+      color=$c_rust
+      ;;
+    Python)
+      plain=' Python'
+      color=$c_python
+      ;;
+    Node)
+      plain=' Node'
+      color=$c_node
+      ;;
+    Lua)
+      plain=' Lua'
+      color=$c_lua
+      ;;
+    Ruby)
+      plain=' Ruby'
+      color=$c_ruby
+      ;;
+    Nix)
+      plain=' Nix'
+      color=$c_nix
+      ;;
+    *)
+      plain='󰈔 Misc'
+      color=$c_misc
+      ;;
+  esac
+
+  fit_field "$plain" "$lang_width"
+  paint_field "$color" "$REPLY"
+}
+
+render_git_field() {
+  local state=$1 plain color
+
+  case "$state" in
+    git)
+      plain=' git'
+      color=$c_git
+      ;;
+    git*)
+      plain=' git*'
+      color=$c_git_dirty
+      ;;
+    *)
+      plain='󰈔 -'
+      color=$c_dim
+      ;;
+  esac
+
+  fit_field "$plain" "$git_width"
+  paint_field "$color" "$REPLY"
+}
+
+render_age_field() {
+  local age=$1
+
+  fit_field "$age" "$age_width"
+  paint_field "$c_time" "$REPLY"
+}
+
+render_marker_field() {
+  local marker=$1
+
+  if [[ $marker == '*' ]]; then
+    paint_field "$c_current" '*'
+  else
+    paint_field "$c_dim" ' '
+  fi
+}
+
 describe_repo() {
-  local dir=$1 epoch date_label age_label name lang git_state marker display fitted_name
+  local dir=$1 epoch age_label name lang git_state marker display marker_field name_field lang_field git_field age_field
 
   epoch=$(repo_epoch "$dir")
-  printf -v date_label '%(%F)T' "$epoch"
   age_label=$(format_age "$epoch")
   name=${dir##*/}
   lang=$(detect_language "$dir")
@@ -226,11 +339,19 @@ describe_repo() {
     marker='*'
   fi
 
-  fit_field "$name" "$name_width"
-  fitted_name=$REPLY
+  render_marker_field "$marker"
+  marker_field=$REPLY
+  render_name_field "$name"
+  name_field=$REPLY
+  render_lang_field "$lang"
+  lang_field=$REPLY
+  render_git_field "$git_state"
+  git_field=$REPLY
+  render_age_field "$age_label"
+  age_field=$REPLY
 
-  printf -v display '%s %s%s%-8s%s%-4s%s%s (%s)' \
-    "$marker" "$fitted_name" "$column_gap" "$lang" "$column_gap" "$git_state" "$column_gap" "$date_label" "$age_label"
+  printf -v display '%s %s%s%s%s%s%s%s' \
+    "$marker_field" "$name_field" "$column_gap" "$lang_field" "$column_gap" "$git_field" "$column_gap" "$age_field"
 
   printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
 }
@@ -254,8 +375,8 @@ build_candidates() {
     return
   fi
 
-  export now cwd name_width git_dirty recency column_gap
-  export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field describe_repo
+  export now cwd name_width lang_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
+  export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_name_field render_lang_field render_git_field render_age_field render_marker_field describe_repo
   printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
 
@@ -274,9 +395,16 @@ pick_repo() {
     | sort -t $'\t' -k1,1nr \
     | cut -f2- \
     | "$fzf_cmd" \
+        --ansi \
         --layout=reverse \
         --height=100% \
         --prompt='' \
+        --pointer='▌' \
+        --color='bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2' \
+        --color='hl:#e0a65b,hl+:#ffd08a,prompt:#8ecfd0,query:#f6efe2,ghost:#6d7d88' \
+        --color='border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6' \
+        --color='input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f' \
+        --color='pointer:#efbf7a,separator:#36434d,scrollbar:#55636e' \
         --ghost='Type to filter, Enter to open, Ctrl-N to create' \
         --input-border \
         --input-label=' Search/New ' \
