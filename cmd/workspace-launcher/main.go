@@ -409,6 +409,9 @@ func buildCandidates(cfg config) ([]candidate, error) {
 func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 	facts := dirFacts{}
 	if inspect {
+		needGit := cfg.showGit || cfg.recency == recencyGit
+		needLanguage := cfg.showLanguage
+		languageDetected := false
 		entries, err := os.ReadDir(child.path)
 		if err != nil {
 			return candidate{}, err
@@ -440,6 +443,13 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 				facts.hasFlakeNix = true
 			case "default.nix":
 				facts.hasDefaultNix = true
+			}
+
+			if !languageDetected && detectLanguage(facts) != "-" {
+				languageDetected = true
+			}
+			if (!needGit || facts.hasGit) && (!needLanguage || languageDetected) {
+				break
 			}
 		}
 	}
