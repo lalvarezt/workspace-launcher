@@ -144,7 +144,6 @@ Configuration is done with environment variables:
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
 | `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git-state column by default.                                     |
 | `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
-| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Marks dirty repositories as `git*`.                                        |
 | `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
 
 ## Install

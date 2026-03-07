@@ -69,7 +69,6 @@ type config struct {
 	initialQuery  string
 	root          string
 	jobs          int
-	gitDirty      bool
 	recency       string
 	showLanguage  bool
 	showGit       bool
@@ -185,7 +184,6 @@ func parseConfig(args []string) (config, error) {
 		mode:          modePath,
 		root:          root,
 		jobs:          jobs,
-		gitDirty:      os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
 		recency:       recencyMtime,
 		showLanguage:  os.Getenv("WORKSPACE_LAUNCHER_SHOW_LANGUAGE") != "0",
 		showGit:       os.Getenv("WORKSPACE_LAUNCHER_SHOW_GIT") != "0",
@@ -307,7 +305,6 @@ Options:
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
-  WORKSPACE_LAUNCHER_GIT_DIRTY      Show dirty repos with git* when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
   WORKSPACE_LAUNCHER_SHOW_GIT       Show the git-state column when set to 1 (default: 1)
@@ -545,7 +542,7 @@ func detectGitState(cfg config, dir string, hasGit bool) string {
 	if !hasGit {
 		return "-"
 	}
-	if !cfg.gitDirty {
+	if cfg.recency != recencyGit {
 		return "git"
 	}
 	dirty, err := gitIsDirty(dir)
