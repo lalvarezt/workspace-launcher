@@ -3,9 +3,9 @@
 [![License](https://img.shields.io/badge/license-MIT-3d3d3d.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v1.0.4-cb8d43.svg)](VERSION)
 [![Last Commit](https://img.shields.io/github/last-commit/lalvarezt/workspace-launcher)](https://github.com/lalvarezt/workspace-launcher/commits/main)
-[![Shell](https://img.shields.io/badge/shell-bash-2f7d32.svg)](bin/workspace-launcher)
+[![Language](https://img.shields.io/badge/language-go-00ADD8.svg)](go.mod)
 
-`workspace-launcher` is an `fzf`-powered workspace picker for the terminal. It
+`workspace-launcher` is a native Go `fzf`-powered workspace picker for the terminal. It
 scans the direct children of a root directory, sorts them by recent activity,
 shows lightweight metadata, and lets you either select an existing workspace or
 create a new one from the current query.
@@ -29,83 +29,93 @@ trees such as `~/.config` or `~/src`.
 - Inline metadata for age, detected language, and git state.
 - `Ctrl-N` creates a new directory from the active query.
 - `Ctrl-E` opens the selected directory in `$VISUAL` or `$EDITOR`.
-- Works as a path picker or a shell launcher.
+- Supports native bash, zsh, and fish shell integration.
 
 ## Requirements
 
-- `bash`
+- Go 1.26 or newer to build or install from source
 - `fzf` in `PATH`, unless you provide a vendored binary at `bin/fzf`
-- Standard Unix tools such as `find`, `sort`, `stat`, and `xargs`
 - `git` if you want git-state display or git-based recency sorting
-
-## Install
-
-For end users, install from GitHub releases with `eget`:
-
-```sh
-eget lalvarezt/workspace-launcher
-```
-
-This is the recommended install path when you want a packaged release asset.
-
-## Local Install
-
-For local development or source checkouts, install the launcher and the short alias with:
-
-```sh
-make install
-```
-
-This installs:
-
-- `workspace-launcher`
-- `wl`
-
-By default both commands go to `${XDG_BIN_HOME:-$HOME/.local/bin}`.
-
-You can override the target directory with either `XDG_BIN_HOME` or `BIN_DIR`
-
-To build release archives locally:
-
-```sh
-make release-assets
-```
-
-To generate a large synthetic workspace tree for performance testing:
-
-```sh
-make bench-setup
-```
 
 ## Usage
 
-By default, `workspace-launcher` prints the selected path. That makes it easy to
-use in shell functions, scripts, and commands such as `cd "$(workspace-launcher)"`.
-Use `--shell` when you want the launcher to open an interactive shell in the
-selected directory instead of returning the path.
+`workspace-launcher` scans the direct children of a root directory, sorts them
+by recency, and opens `fzf`. By default it prints the selected path, which
+makes it easy to plug into shell workflows.
 
-Print the selected path:
+Jump to a workspace:
 
 ```sh
-workspace-launcher
+cd "$(workspace-launcher)"
 ```
 
-Start a shell in the selected directory:
+Enable shell integration:
 
 ```sh
-workspace-launcher --shell
+source <(workspace-launcher --bash)
 ```
 
-Seed the query and sort by latest git commit:
+```sh
+source <(workspace-launcher --zsh)
+```
 
 ```sh
-WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
+eval "$(workspace-launcher --zsh)"
+```
+
+```fish
+workspace-launcher --fish | source
+```
+
+Each integration defines `workspace-launcher-cd` and binds `Ctrl-G` to open the
+picker and `cd` directly in the current shell session.
+
+For `bash` and `zsh`, use `source <(...)` or `eval "$(…)"`. `eval <(...)`
+does not work because the shell expands the process substitution to a
+`/proc/self/fd/*` path and then tries to execute that path as a command.
+
+The shell scripts also live in [shell/key-bindings.bash](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.bash), [shell/key-bindings.zsh](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.zsh), and [shell/key-bindings.fish](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.fish), mirroring `fzf`'s layout. Those files are the source templates; use `--bash`, `--zsh`, or `--fish` to emit a script with the correct binary path prelude.
+
+Rebind it with normal shell commands after sourcing:
+
+```fish
+bind --erase \cg
+bind \eg workspace-launcher-widget
+```
+
+Search under a different root:
+
+```sh
+workspace-launcher ~/src
+```
+
+Seed the query:
+
+```sh
+workspace-launcher --query fzf ~/src
 ```
 
 Use it as a generic picker for config directories:
 
 ```sh
 workspace-launcher --no-language --no-git ~/.config
+```
+
+## Recency Modes
+
+Recency sorting is controlled with `WORKSPACE_LAUNCHER_RECENCY`.
+
+- `mtime` (default): sorts by each child directory's modification time. This is
+  the fastest mode and works well for generic directory trees.
+- `git`: sorts git repositories by the latest commit timestamp. For directories
+  without `.git`, or when git metadata cannot be read, it falls back to
+  directory `mtime`.
+
+Use git-based recency when your root mostly contains repositories and you want
+recent commit activity to matter more than filesystem `mtime`:
+
+```sh
+WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 ```
 
 ## Key Bindings
@@ -118,14 +128,17 @@ workspace-launcher --no-language --no-git ~/.config
 ## CLI Options
 
 ```text
-Usage: workspace-launcher [--print|--shell] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+Usage: workspace-launcher [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 ```
 
-- `--print`: print the selected or created path
-- `--shell`: start an interactive shell in the selected path
+- `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)` or `eval "$(workspace-launcher --bash)"`
+- `--zsh`: print zsh shell integration; load with `source <(workspace-launcher --zsh)` or `eval "$(workspace-launcher --zsh)"`
+- `--fish`: print fish shell integration
 - `--query TEXT`: start with an initial query
 - `--language` / `--no-language`: show or hide the language column
 - `--git` / `--no-git`: show or hide the git-state column
+- `-h` / `--help`: show help text
+- `-v` / `--version`: show version
 - `ROOT`: override the default root directory for this run
 
 ## Configuration
@@ -135,12 +148,60 @@ Configuration is done with environment variables:
 | Variable                             | Description                                                                |
 |--------------------------------------|----------------------------------------------------------------------------|
 | `WORKSPACE_LAUNCHER_ROOT`            | Default root directory. Defaults to `~/git-repos`.                         |
-| `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
-| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Marks dirty repositories as `git*`.                                        |
-| `WORKSPACE_LAUNCHER_RECENCY=git`     | Sorts by the latest commit timestamp instead of directory mtime.           |
+| `WORKSPACE_LAUNCHER_RECENCY`         | Recency mode: `mtime` (default) or `git`.                                  |
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
 | `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git-state column by default.                                     |
+| `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
 | `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
+
+## Install
+
+Install the launcher with Go:
+
+```sh
+go install github.com/lalvarezt/workspace-launcher/cmd/workspace-launcher@latest
+```
+
+This installs `workspace-launcher` into `GOBIN` or `$(go env GOPATH)/bin`.
+
+Install the benchmark fixture generator with:
+
+```sh
+go install github.com/lalvarezt/workspace-launcher/cmd/bench-setup@latest
+```
+
+## Local Build
+
+Build the launcher binary from a checkout:
+
+```sh
+mkdir -p .build
+go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
+```
+
+Build the benchmark fixture generator:
+
+```sh
+go build -o ./.build/bench-setup ./cmd/bench-setup
+```
+
+Run the launcher directly after building:
+
+```sh
+./.build/workspace-launcher
+```
+
+Install from the local checkout into a custom bin dir:
+
+```sh
+GOBIN="${XDG_BIN_HOME:-$HOME/.local/bin}" go install ./cmd/workspace-launcher
+```
+
+Generate a large synthetic workspace tree for performance testing:
+
+```sh
+go run ./cmd/bench-setup
+```
 
 ## Notes
 
