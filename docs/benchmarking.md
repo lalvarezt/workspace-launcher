@@ -3,9 +3,7 @@
 Create the synthetic fixture tree:
 
 ```sh
-mkdir -p .build
-go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
-go build -o ./.build/bench-setup ./cmd/bench-setup
+just build
 ./.build/bench-setup
 ```
 

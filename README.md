@@ -59,22 +59,12 @@ source <(workspace-launcher --bash)
 source <(workspace-launcher --zsh)
 ```
 
-```sh
-eval "$(workspace-launcher --zsh)"
-```
-
 ```fish
 workspace-launcher --fish | source
 ```
 
 Each integration defines `workspace-launcher-cd` and binds `Ctrl-G` to open the
 picker and `cd` directly in the current shell session.
-
-For `bash` and `zsh`, use `source <(...)` or `eval "$(…)"`. `eval <(...)`
-does not work because the shell expands the process substitution to a
-`/proc/self/fd/*` path and then tries to execute that path as a command.
-
-The shell scripts also live in [shell/key-bindings.bash](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.bash), [shell/key-bindings.zsh](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.zsh), and [shell/key-bindings.fish](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.fish), mirroring `fzf`'s layout. Those files are the source templates; use `--bash`, `--zsh`, or `--fish` to emit a script with the correct binary path prelude.
 
 Rebind it with normal shell commands after sourcing:
 
@@ -131,9 +121,9 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 Usage: workspace-launcher [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 ```
 
-- `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)` or `eval "$(workspace-launcher --bash)"`
-- `--zsh`: print zsh shell integration; load with `source <(workspace-launcher --zsh)` or `eval "$(workspace-launcher --zsh)"`
-- `--fish`: print fish shell integration
+- `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)`
+- `--zsh`: print zsh shell integration; load with `source <(workspace-launcher --zsh)`
+- `--fish`: print fish shell integration; load with `workspace-launcher --fish | source`
 - `--query TEXT`: start with an initial query
 - `--language` / `--no-language`: show or hide the language column
 - `--git` / `--no-git`: show or hide the git-state column
@@ -156,45 +146,61 @@ Configuration is done with environment variables:
 
 ## Install
 
-Install the launcher with Go:
+Use `just` for the common local workflows:
+
+```sh
+just test
+just build
+just run -- --query fzf ~/src
+just install
+just bump-version v1.0.5
+```
+
+`just install` builds the local checkout and installs `workspace-launcher` and
+`bench-setup` into `${XDG_BIN_HOME:-$HOME/.local/bin}` by default, then creates
+`wl` as a symlink to `workspace-launcher`.
+
+The install logic also lives in `install.sh`, so the direct GitHub installer can
+look like this:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lalvarezt/workspace-launcher/main/install.sh | bash
+```
+
+You can also install with Go:
 
 ```sh
 go install github.com/lalvarezt/workspace-launcher/cmd/workspace-launcher@latest
-```
-
-This installs `workspace-launcher` into `GOBIN` or `$(go env GOPATH)/bin`.
-
-Install the benchmark fixture generator with:
-
-```sh
 go install github.com/lalvarezt/workspace-launcher/cmd/bench-setup@latest
+ln -sfn workspace-launcher "${XDG_BIN_HOME:-$HOME/.local/bin}/wl"
 ```
 
 ## Local Build
 
-Build the launcher binary from a checkout:
+Build every local binary from a checkout:
 
 ```sh
-mkdir -p .build
-go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
+just build
 ```
 
-Build the benchmark fixture generator:
+That produces:
 
-```sh
-go build -o ./.build/bench-setup ./cmd/bench-setup
-```
+- `./.build/workspace-launcher`
+- `./.build/bench-setup`
 
 Run the launcher directly after building:
 
 ```sh
-./.build/workspace-launcher
+just run
 ```
 
-Install from the local checkout into a custom bin dir:
+If you prefer direct Go commands, the launcher binaries use the shared version
+ldflag path:
 
 ```sh
-GOBIN="${XDG_BIN_HOME:-$HOME/.local/bin}" go install ./cmd/workspace-launcher
+mkdir -p .build
+go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
+go build -o ./.build/bench-setup ./cmd/bench-setup
 ```
 
 Generate a large synthetic workspace tree for performance testing:

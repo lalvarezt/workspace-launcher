@@ -71,11 +71,10 @@ jobs:
               -o "$stage_dir/workspace-launcher" \
               ./cmd/workspace-launcher
             install -m 755 "$stage_dir/workspace-launcher" "dist/bin/workspace-launcher_${version_no_v}_${target}"
-            ln -sf workspace-launcher "$stage_dir/wl"
             install -m 644 LICENSE "$stage_dir/LICENSE"
             install -m 644 README.md "$stage_dir/README.md"
             install -m 644 VERSION "$stage_dir/VERSION"
-            tar -C "$stage_dir" -czf "dist/workspace-launcher_${version_no_v}_${target}.tar.gz" workspace-launcher wl LICENSE README.md VERSION
+            tar -C "$stage_dir" -czf "dist/workspace-launcher_${version_no_v}_${target}.tar.gz" workspace-launcher LICENSE README.md VERSION
           done
           (
             cd dist
