@@ -6,7 +6,8 @@ usage() {
 	cat <<'EOF'
 Usage: repo-launcher [--print|--shell] [--query TEXT] [ROOT]
 
-Launch an fzf-based repo picker.
+Launch an fzf-based repo picker for directories under ROOT.
+Selecting an existing entry opens that repo; submitting a new query creates it.
 
 Options:
   --print       Print the selected or created path (default)
@@ -15,10 +16,10 @@ Options:
   -h, --help    Show this help text
 
 Environment:
-  REPO_LAUNCHER_ROOT  Default root directory (default: ~/git-repos)
-  REPO_LAUNCHER_JOBS  Parallel jobs (default: CPU count, clamped to 1..CPU count)
+  REPO_LAUNCHER_ROOT       Default root directory (default: ~/git-repos)
+  REPO_LAUNCHER_JOBS       Parallel jobs, clamped to 1..CPU count
   REPO_LAUNCHER_GIT_DIRTY  Show dirty repos with git* when set to 1 (default: 0)
-  REPO_LAUNCHER_RECENCY  Recency source: mtime or git (default: mtime)
+  REPO_LAUNCHER_RECENCY    Sort recency by directory mtime or latest git commit
 EOF
 }
 
@@ -27,6 +28,8 @@ die() {
 	exit 1
 }
 
+# Prefer the fzf binary from this checkout so the launcher stays aligned with
+# the repo you are currently working in.
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(cd -- "$script_dir/.." && pwd -P)
 
@@ -59,6 +62,8 @@ now=$(printf '%(%s)T' -1)
 cwd=$(pwd -P)
 cols=${COLUMNS:-$(tput cols 2>/dev/null || printf '120')}
 [[ $cols =~ ^[0-9]+$ ]] || cols=120
+
+# Compute fixed-width columns once so worker shells can reuse the same layout.
 column_gap='   '
 gap_width=3
 lang_width=12
@@ -239,13 +244,6 @@ paint_field() {
 	REPLY=${color}${text}${c_reset}
 }
 
-render_name_field() {
-	local name=$1
-
-	fit_field "$name" "$name_width"
-	paint_field "$c_name" "$REPLY"
-}
-
 render_lang_field() {
 	local lang=$1 icon label color icon_cell
 
@@ -327,23 +325,8 @@ render_git_field() {
 	paint_field "$color" "$REPLY"
 }
 
-render_age_field() {
-	local age=$1
-
-	fit_field "$age" "$age_width"
-	paint_field "$c_time" "$REPLY"
-}
-
-render_marker_field() {
-	local marker=$1
-
-	if [[ $marker == '*' ]]; then
-		paint_field "$c_current" '*'
-	else
-		paint_field "$c_dim" ' '
-	fi
-}
-
+# Each row is "epoch<TAB>path<TAB>display". The numeric prefix keeps sorting
+# cheap while fzf only renders the formatted display columns.
 describe_repo() {
 	local dir=$1 epoch age_label name lang git_state marker display marker_field name_field lang_field git_field age_field
 
@@ -357,15 +340,21 @@ describe_repo() {
 		marker='*'
 	fi
 
-	render_marker_field "$marker"
+	if [[ $marker == '*' ]]; then
+		paint_field "$c_current" '*'
+	else
+		paint_field "$c_dim" ' '
+	fi
 	marker_field=$REPLY
-	render_name_field "$name"
+	fit_field "$name" "$name_width"
+	paint_field "$c_name" "$REPLY"
 	name_field=$REPLY
 	render_lang_field "$lang"
 	lang_field=$REPLY
 	render_git_field "$git_state"
 	git_field=$REPLY
-	render_age_field "$age_label"
+	fit_field "$age_label" "$age_width"
+	paint_field "$c_time" "$REPLY"
 	age_field=$REPLY
 
 	printf -v display '%s %s%s%s%s%s%s%s' \
@@ -393,8 +382,8 @@ build_candidates() {
 		return
 	fi
 
-	export now cwd name_width lang_width lang_label_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
-	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_name_field render_lang_field render_git_field render_age_field render_marker_field describe_repo
+	export now cwd name_width lang_label_width git_width age_width git_dirty recency column_gap c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
+	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_lang_field render_git_field describe_repo
 	printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
 
