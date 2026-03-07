@@ -51,6 +51,12 @@ else
 	stat_mtime_flag='-f'
 	stat_mtime_format='%m'
 fi
+# GNU find can emit direct-child mtimes in one pass, which avoids one stat
+# process per directory on large trees. Other find implementations fall back.
+find_printf=0
+if find "$repo_root" -maxdepth 0 -printf '' >/dev/null 2>&1; then
+	find_printf=1
+fi
 
 fzf_bin=${FZF_BIN:-}
 mode=print
@@ -379,8 +385,11 @@ render_git_field() {
 # cheap while fzf only renders the formatted display columns.
 describe_repo() {
 	local dir=$1 epoch age_label name lang git_state marker display marker_field name_field lang_field git_field age_field
+	epoch=${2:-}
 
-	epoch=$(repo_epoch "$dir")
+	if [[ -z $epoch ]]; then
+		epoch=$(repo_epoch "$dir")
+	fi
 	age_label=$(format_age "$epoch")
 	name=${dir##*/}
 	lang=
@@ -426,37 +435,62 @@ describe_repo() {
 }
 
 build_candidates() {
-	local dir batch_size
-	local -a dirs=()
+	local dir entry epoch batch_size
+	local -a entries=()
 
-	shopt -s nullglob
-	for dir in "$root"/*; do
-		[[ -d $dir ]] || continue
-		dirs+=("$dir")
-	done
+	if ((find_printf)) && [[ $recency == mtime ]]; then
+		while IFS= read -r -d '' entry; do
+			entries+=("$entry")
+		done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\0')
+	else
+		shopt -s nullglob
+		for dir in "$root"/*; do
+			[[ -d $dir ]] || continue
+			entries+=("$dir")
+		done
+	fi
 
-	((${#dirs[@]} > 0)) || return 0
+	((${#entries[@]} > 0)) || return 0
 
-	if ((jobs <= 1 || ${#dirs[@]} == 1)); then
-		for dir in "${dirs[@]}"; do
-			describe_repo "$dir"
+	if ((jobs <= 1 || ${#entries[@]} == 1)); then
+		for entry in "${entries[@]}"; do
+			if ((find_printf)) && [[ $recency == mtime ]]; then
+				epoch=${entry%%$'\t'*}
+				epoch=${epoch%%.*}
+				dir=${entry#*$'\t'}
+				describe_repo "$dir" "$epoch"
+			else
+				describe_repo "$entry"
+			fi
 		done
 		return
 	fi
 
-	batch_size=$(((${#dirs[@]} + (jobs * 4) - 1) / (jobs * 4)))
+	batch_size=$(((${#entries[@]} + (jobs * 4) - 1) / (jobs * 4)))
 	if ((batch_size < 1)); then
 		batch_size=1
 	fi
 
 	export now cwd name_width lang_label_width git_width age_width git_dirty recency show_language show_git column_gap stat_mtime_flag stat_mtime_format c_reset c_dim c_name c_current c_go c_rust c_python c_node c_lua c_ruby c_nix c_misc c_git c_git_dirty c_time
 	export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field paint_field render_lang_field render_git_field describe_repo
-	printf '%s\0' "${dirs[@]}" | xargs -0 -n"$batch_size" -P "$jobs" bash -c '
-		dir=
-		for dir in "$@"; do
-			describe_repo "$dir"
-		done
-	' _
+	if ((find_printf)) && [[ $recency == mtime ]]; then
+		printf '%s\0' "${entries[@]}" | xargs -0 -n"$batch_size" -P "$jobs" bash -c '
+			tab=$(printf "\t")
+			for entry in "$@"; do
+				epoch=${entry%%"$tab"*}
+				epoch=${epoch%%.*}
+				dir=${entry#*"$tab"}
+				describe_repo "$dir" "$epoch"
+			done
+		' _
+	else
+		printf '%s\0' "${entries[@]}" | xargs -0 -n"$batch_size" -P "$jobs" bash -c '
+			dir=
+			for dir in "$@"; do
+				describe_repo "$dir"
+			done
+		' _
+	fi
 }
 
 validate_new_name() {
