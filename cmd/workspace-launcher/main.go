@@ -916,6 +916,16 @@ func openInEditor(target string) error {
 	if os.Getenv("VISUAL") == "" && os.Getenv("EDITOR") == "" {
 		return errors.New("VISUAL or EDITOR is not set")
 	}
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open /dev/tty: %w", err)
+	}
+	defer tty.Close()
+	for _, fd := range []int{0, 1, 2} {
+		if err := syscall.Dup2(int(tty.Fd()), fd); err != nil {
+			return fmt.Errorf("reattach tty fd %d: %w", fd, err)
+		}
+	}
 	shell := os.Getenv("BASH")
 	if shell == "" {
 		shell = "/bin/bash"
