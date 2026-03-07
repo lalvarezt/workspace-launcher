@@ -1,4 +1,7 @@
-SCRIPT := bin/workspace-launcher
+GO ?= go
+PACKAGE := ./cmd/workspace-launcher
+BUILD_DIR ?= .build
+BINARY := $(BUILD_DIR)/workspace-launcher
 BENCH_SETUP := scripts/bench-setup
 VERSION := $(shell cat VERSION)
 BIN_DIR ?= $(HOME)/.local/bin
@@ -7,11 +10,16 @@ RELEASE_TARGETS ?= linux_amd64 linux_arm64 darwin_amd64 darwin_arm64
 BENCH_ROOT ?= /tmp/workspace-launcher-bench
 BENCH_COUNT ?= 1500
 BENCH_ARGS ?=
+LDFLAGS := -X main.version=$(VERSION)
 
-install:
+build:
+	mkdir -p "$(BUILD_DIR)"
+	CGO_ENABLED=0 "$(GO)" build -ldflags "$(LDFLAGS)" -o "$(BINARY)" "$(PACKAGE)"
+
+install: build
 	dest_dir="$${XDG_BIN_HOME:-$(BIN_DIR)}"; \
 	mkdir -p "$$dest_dir"; \
-	install -m 755 "$(SCRIPT)" "$$dest_dir/workspace-launcher"; \
+	install -m 755 "$(BINARY)" "$$dest_dir/workspace-launcher"; \
 	ln -sf workspace-launcher "$$dest_dir/wl"; \
 	printf 'installed %s (%s) and %s\n' "$$dest_dir/workspace-launcher" "$(VERSION)" "$$dest_dir/wl"
 
@@ -28,10 +36,12 @@ release-assets:
 	version="$(VERSION)"; \
 	version_no_v="$${version#v}"; \
 	for target in $(RELEASE_TARGETS); do \
+		goos="$${target%_*}"; \
+		goarch="$${target#*_}"; \
 		stage_dir="$(DIST_DIR)/stage/$$target"; \
 		mkdir -p "$$stage_dir"; \
-		install -m 755 "$(SCRIPT)" "$$stage_dir/workspace-launcher"; \
-		install -m 755 "$(SCRIPT)" "$(DIST_DIR)/bin/workspace-launcher_$${version_no_v}_$${target}"; \
+		CGO_ENABLED=0 GOOS="$$goos" GOARCH="$$goarch" "$(GO)" build -ldflags "$(LDFLAGS)" -o "$$stage_dir/workspace-launcher" "$(PACKAGE)"; \
+		install -m 755 "$$stage_dir/workspace-launcher" "$(DIST_DIR)/bin/workspace-launcher_$${version_no_v}_$${target}"; \
 		ln -sf workspace-launcher "$$stage_dir/wl"; \
 		install -m 644 LICENSE "$$stage_dir/LICENSE"; \
 		install -m 644 README.md "$$stage_dir/README.md"; \
@@ -52,4 +62,7 @@ release-assets:
 bench-setup:
 	"$(BENCH_SETUP)" --root "$(BENCH_ROOT)" --count "$(BENCH_COUNT)" $(BENCH_ARGS)
 
-.PHONY: install uninstall version release-assets bench-setup
+clean:
+	rm -rf "$(BUILD_DIR)"
+
+.PHONY: build install uninstall version release-assets bench-setup clean

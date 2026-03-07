@@ -3,9 +3,9 @@
 [![License](https://img.shields.io/badge/license-MIT-3d3d3d.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v1.0.4-cb8d43.svg)](VERSION)
 [![Last Commit](https://img.shields.io/github/last-commit/lalvarezt/workspace-launcher)](https://github.com/lalvarezt/workspace-launcher/commits/main)
-[![Shell](https://img.shields.io/badge/shell-bash-2f7d32.svg)](bin/workspace-launcher)
+[![Language](https://img.shields.io/badge/language-go-00ADD8.svg)](cmd/workspace-launcher/main.go)
 
-`workspace-launcher` is an `fzf`-powered workspace picker for the terminal. It
+`workspace-launcher` is a native Go `fzf`-powered workspace picker for the terminal. It
 scans the direct children of a root directory, sorts them by recent activity,
 shows lightweight metadata, and lets you either select an existing workspace or
 create a new one from the current query.
@@ -33,9 +33,7 @@ trees such as `~/.config` or `~/src`.
 
 ## Requirements
 
-- `bash`
 - `fzf` in `PATH`, unless you provide a vendored binary at `bin/fzf`
-- Standard Unix tools such as `find`, `sort`, `stat`, and `xargs`
 - `git` if you want git-state display or git-based recency sorting
 
 ## Install
@@ -50,7 +48,19 @@ This is the recommended install path when you want a packaged release asset.
 
 ## Local Install
 
-For local development or source checkouts, install the launcher and the short alias with:
+For local development or source checkouts, build the native binary with:
+
+```sh
+make build
+```
+
+Run the repo-local wrapper after building:
+
+```sh
+./bin/workspace-launcher
+```
+
+Install the launcher and the short alias with:
 
 ```sh
 make install

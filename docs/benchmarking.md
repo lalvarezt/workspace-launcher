@@ -21,6 +21,7 @@ make bench-setup BENCH_COUNT=2500 BENCH_ROOT=/tmp/wl-bench
 Run the launcher through the headless `fzf` stub:
 
 ```sh
-hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub ./bin/workspace-launcher --print /tmp/workspace-launcher-bench >/dev/null'
-hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub WORKSPACE_LAUNCHER_RECENCY=git ./bin/workspace-launcher --print /tmp/workspace-launcher-bench >/dev/null'
+make build
+hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub ./.build/workspace-launcher --print /tmp/workspace-launcher-bench >/dev/null'
+hyperfine --warmup 3 'FZF_BIN=./scripts/fzf-bench-stub WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher --print /tmp/workspace-launcher-bench >/dev/null'
 ```
