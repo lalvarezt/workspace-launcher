@@ -57,6 +57,7 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           files: |
+            dist/bin/*
             dist/*.tar.gz
             dist/checksums.txt
           fail_on_unmatched_files: true
