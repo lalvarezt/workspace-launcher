@@ -16,6 +16,7 @@ Options:
 
 Environment:
   REPO_LAUNCHER_ROOT  Default root directory (default: ~/git-repos)
+  REPO_LAUNCHER_JOBS  Parallel jobs (default: CPU count, clamped to 1..CPU count)
 EOF
 }
 
@@ -31,9 +32,29 @@ fzf_bin=${FZF_BIN:-}
 mode=print
 initial_query=
 root=${REPO_LAUNCHER_ROOT:-$HOME/git-repos}
-jobs=${REPO_LAUNCHER_JOBS:-8}
+max_jobs=$(getconf _NPROCESSORS_ONLN 2> /dev/null || nproc 2> /dev/null || printf '1')
+[[ $max_jobs =~ ^[0-9]+$ ]] || max_jobs=1
+if ((max_jobs < 1)); then
+  max_jobs=1
+fi
+jobs=${REPO_LAUNCHER_JOBS:-$max_jobs}
+if [[ ! $jobs =~ ^[0-9]+$ ]]; then
+  jobs=1
+elif ((jobs < 1)); then
+  jobs=1
+elif ((jobs > max_jobs)); then
+  jobs=$max_jobs
+fi
 now=$(printf '%(%s)T' -1)
 cwd=$(pwd -P)
+cols=${COLUMNS:-$(tput cols 2> /dev/null || printf '120')}
+[[ $cols =~ ^[0-9]+$ ]] || cols=120
+name_width=$((cols - 52))
+if ((name_width < 18)); then
+  name_width=18
+elif ((name_width > 60)); then
+  name_width=60
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -153,8 +174,25 @@ is_current_repo() {
   [[ $cwd == "$dir" || $cwd == "$dir"/* ]]
 }
 
+fit_field() {
+  local text=$1 width=$2 trimmed
+
+  if ((${#text} <= width)); then
+    printf -v REPLY '%-*s' "$width" "$text"
+    return
+  fi
+
+  if ((width <= 3)); then
+    printf -v REPLY '%.*s' "$width" "$text"
+    return
+  fi
+
+  trimmed=${text:0:width-3}
+  printf -v REPLY '%-*s' "$width" "$trimmed..."
+}
+
 describe_repo() {
-  local dir=$1 epoch date_label age_label name lang git_state marker display
+  local dir=$1 epoch date_label age_label name lang git_state marker display fitted_name
 
   epoch=$(repo_epoch "$dir")
   printf -v date_label '%(%F)T' "$epoch"
@@ -167,8 +205,11 @@ describe_repo() {
     marker='*'
   fi
 
-  printf -v display '%s %-32s %-8s %-4s %s (%s)' \
-    "$marker" "$name" "$lang" "$git_state" "$date_label" "$age_label"
+  fit_field "$name" "$name_width"
+  fitted_name=$REPLY
+
+  printf -v display '%s %s %-8s %-4s %s (%s)' \
+    "$marker" "$fitted_name" "$lang" "$git_state" "$date_label" "$age_label"
 
   printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
 }
@@ -192,8 +233,8 @@ build_candidates() {
     return
   fi
 
-  export now cwd
-  export -f format_age detect_language detect_git_state repo_epoch is_current_repo describe_repo
+  export now cwd name_width
+  export -f format_age detect_language detect_git_state repo_epoch is_current_repo fit_field describe_repo
   printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
 }
 
