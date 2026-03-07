@@ -2,11 +2,14 @@
 
 set -euo pipefail
 
+app_name=workspace-launcher
 prog_name=${0##*/}
+# Keep this in sync with the top-level VERSION file for tagged releases.
+version='v1.0.0'
 
 usage() {
 	cat <<EOF
-Usage: $prog_name [--print|--shell] [--query TEXT] [--[no-]language] [--[no-]git] [ROOT]
+Usage: $prog_name [--print|--shell] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 
 Launch an fzf-based directory picker for directories under ROOT.
 Selecting an existing entry opens that directory; submitting a new query creates it.
@@ -19,6 +22,7 @@ Options:
   --no-language    Hide the language column
   --git            Show the git-state column (default)
   --no-git         Hide the git-state column
+  -v, --version    Show version
   -h, --help       Show this help text
 
 Environment:
@@ -127,6 +131,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--no-git)
 		show_git=0
+		;;
+	-v | --version)
+		printf '%s %s\n' "$app_name" "$version"
+		exit 0
 		;;
 	-h | --help)
 		usage
