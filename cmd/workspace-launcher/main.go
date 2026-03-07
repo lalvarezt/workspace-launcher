@@ -302,6 +302,11 @@ Options:
   -v, --version    Show version
   -h, --help       Show this help text
 
+Shell integration:
+  bash/zsh         Load with source <(workspace-launcher --bash|--zsh)
+                   or eval "$(workspace-launcher --bash|--zsh)"
+                   Do not use eval <(...).
+
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count

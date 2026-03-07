@@ -46,3 +46,17 @@ func TestGeneratedScriptsInjectBinaryPreludeWithoutFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestBashScriptUsesAcceptLineRefreshFlow(t *testing.T) {
+	script := Bash("/tmp/workspace-launcher")
+	for _, want := range []string{
+		`__workspace_launcher_widget_key='\C-x\C-_W1\a'`,
+		`__workspace_launcher_accept_key='\C-x\C-_W0\a'`,
+		`accept-line`,
+		`$__workspace_launcher_widget_key$__workspace_launcher_accept_key`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("bash script missing %q in %q", want, script)
+		}
+	}
+}

@@ -59,12 +59,20 @@ source <(workspace-launcher --bash)
 source <(workspace-launcher --zsh)
 ```
 
+```sh
+eval "$(workspace-launcher --zsh)"
+```
+
 ```fish
 workspace-launcher --fish | source
 ```
 
 Each integration defines `workspace-launcher-cd` and binds `Ctrl-G` to open the
 picker and `cd` directly in the current shell session.
+
+For `bash` and `zsh`, use `source <(...)` or `eval "$(…)"`. `eval <(...)`
+does not work because the shell expands the process substitution to a
+`/proc/self/fd/*` path and then tries to execute that path as a command.
 
 The shell scripts also live in [shell/key-bindings.bash](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.bash), [shell/key-bindings.zsh](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.zsh), and [shell/key-bindings.fish](/home/lalvarezt/.t3/worktrees/workspace-launcher/t3code-db9a6af1/shell/key-bindings.fish), mirroring `fzf`'s layout. Those files are the source templates; use `--bash`, `--zsh`, or `--fish` to emit a script with the correct binary path prelude.
 
@@ -123,8 +131,8 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 Usage: workspace-launcher [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 ```
 
-- `--bash`: print bash shell integration
-- `--zsh`: print zsh shell integration
+- `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)` or `eval "$(workspace-launcher --bash)"`
+- `--zsh`: print zsh shell integration; load with `source <(workspace-launcher --zsh)` or `eval "$(workspace-launcher --zsh)"`
 - `--fish`: print fish shell integration
 - `--query TEXT`: start with an initial query
 - `--language` / `--no-language`: show or hide the language column
