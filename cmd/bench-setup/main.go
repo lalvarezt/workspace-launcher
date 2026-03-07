@@ -456,8 +456,8 @@ root=%s
 count=%d
 
 Example:
-  hyperfine --warmup 3 'WORKSPACE_LAUNCHER_BENCH_MODE=headless ./.build/workspace-launcher --print %s >/dev/null'
-  hyperfine --warmup 3 'WORKSPACE_LAUNCHER_BENCH_MODE=headless WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher --print %s >/dev/null'
+  hyperfine --warmup 3 'WORKSPACE_LAUNCHER_BENCH_MODE=headless ./.build/workspace-launcher %s >/dev/null'
+  hyperfine --warmup 3 'WORKSPACE_LAUNCHER_BENCH_MODE=headless WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher %s >/dev/null'
 `, root, count, root, root)
 	return os.WriteFile(filepath.Join(root, "README-bench.txt"), []byte(body), 0o644)
 }

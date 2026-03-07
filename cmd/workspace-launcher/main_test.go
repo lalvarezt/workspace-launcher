@@ -222,6 +222,77 @@ func TestSplitResultSeparatesExpectedKey(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsPrintFlag(t *testing.T) {
+	_, err := parseConfig([]string{"--print"})
+	if err == nil {
+		t.Fatal("expected error for removed --print flag")
+	}
+	if !strings.Contains(err.Error(), "unknown option: --print") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenderShellCommandQuotesPath(t *testing.T) {
+	target := "/tmp/ab'cd"
+	got := renderShellCommand(target)
+	want := "cd -- '/tmp/ab'\\''cd'"
+	if got != want {
+		t.Fatalf("unexpected shell command: got %q want %q", got, want)
+	}
+}
+
+func TestParseConfigShellIntegrationModeSkipsRootResolution(t *testing.T) {
+	t.Setenv("WORKSPACE_LAUNCHER_ROOT", "/path/that/does/not/exist")
+
+	for _, mode := range []string{"--bash", "--zsh", "--fish"} {
+		cfg, err := parseConfig([]string{mode})
+		if err != nil {
+			t.Fatalf("parseConfig(%s) returned error: %v", mode, err)
+		}
+		if !outputsShellIntegration(cfg.mode) {
+			t.Fatalf("expected shell integration mode for %s, got %q", mode, cfg.mode)
+		}
+	}
+}
+
+func TestOutputsShellIntegration(t *testing.T) {
+	for _, mode := range []string{modeBash, modeZsh, modeFish} {
+		if !outputsShellIntegration(mode) {
+			t.Fatalf("expected %q to be recognized as shell integration mode", mode)
+		}
+	}
+	if outputsShellIntegration(modeShell) {
+		t.Fatal("did not expect --shell fallback mode to be treated as native integration")
+	}
+}
+
+func TestRenderShellIntegrationIncludesPreludeAndWidget(t *testing.T) {
+	tempExe := filepath.Join(t.TempDir(), `workspace-launcher$bin"test`)
+
+	tests := []struct {
+		mode        string
+		wantPrelude string
+		wantSnippet string
+	}{
+		{mode: modeBash, wantPrelude: `__workspace_launcher_bin='`, wantSnippet: "workspace-launcher-widget"},
+		{mode: modeZsh, wantPrelude: `__workspace_launcher_bin='`, wantSnippet: "workspace-launcher-widget"},
+		{mode: modeFish, wantPrelude: `set -g __workspace_launcher_bin "`, wantSnippet: "workspace-launcher-widget"},
+	}
+
+	for _, tt := range tests {
+		script, err := renderShellIntegrationForPath(tt.mode, tempExe)
+		if err != nil {
+			t.Fatalf("renderShellIntegration(%s) returned error: %v", tt.mode, err)
+		}
+		if !strings.Contains(script, tt.wantPrelude) {
+			t.Fatalf("expected prelude for %s in %q", tt.mode, script)
+		}
+		if !strings.Contains(script, tt.wantSnippet) {
+			t.Fatalf("expected widget for %s in %q", tt.mode, script)
+		}
+	}
+}
+
 func makeDir(t *testing.T, dir string, epoch int64, marker string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
