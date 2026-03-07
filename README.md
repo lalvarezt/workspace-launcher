@@ -141,3 +141,10 @@ Configuration is done with environment variables:
 - The launcher only scans the direct children of the selected root.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
+
+## Acknowledgements
+
+This launcher was influenced by prior work on terminal project and workspace pickers, especially:
+
+- [`tobi/try`](https://github.com/tobi/try)
+- [`tassiovirginio/try-rs`](https://github.com/tassiovirginio/try-rs)
