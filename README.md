@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-MIT-3d3d3d.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v1.0.4-cb8d43.svg)](VERSION)
 [![Last Commit](https://img.shields.io/github/last-commit/lalvarezt/workspace-launcher)](https://github.com/lalvarezt/workspace-launcher/commits/main)
-[![Language](https://img.shields.io/badge/language-go-00ADD8.svg)](cmd/workspace-launcher/main.go)
+[![Language](https://img.shields.io/badge/language-go-00ADD8.svg)](go.mod)
 
 `workspace-launcher` is a native Go `fzf`-powered workspace picker for the terminal. It
 scans the direct children of a root directory, sorts them by recent activity,
@@ -33,25 +33,39 @@ trees such as `~/.config` or `~/src`.
 
 ## Requirements
 
+- Go 1.26 or newer to build or install from source
 - `fzf` in `PATH`, unless you provide a vendored binary at `bin/fzf`
 - `git` if you want git-state display or git-based recency sorting
 
 ## Install
 
-For end users, install from GitHub releases with `eget`:
+Install the launcher with Go:
 
 ```sh
-eget lalvarezt/workspace-launcher
+go install github.com/lalvarezt/workspace-launcher/cmd/workspace-launcher@latest
 ```
 
-This is the recommended install path when you want a packaged release asset.
+This installs the `workspace-launcher` binary into `GOBIN` or `$(go env GOPATH)/bin`.
 
-## Local Install
-
-For local development or source checkouts, build the native binaries with:
+Install the benchmark fixture generator with:
 
 ```sh
-make build
+go install github.com/lalvarezt/workspace-launcher/cmd/bench-setup@latest
+```
+
+## Local Build
+
+Build the launcher binary from a checkout:
+
+```sh
+mkdir -p .build
+go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
+```
+
+Build the benchmark fixture generator:
+
+```sh
+go build -o ./.build/bench-setup ./cmd/bench-setup
 ```
 
 Run the launcher directly after building:
@@ -60,31 +74,19 @@ Run the launcher directly after building:
 ./.build/workspace-launcher
 ```
 
-Install the launcher and the short alias with:
+Install from the local checkout into a custom bin dir:
 
 ```sh
-make install
+GOBIN="${XDG_BIN_HOME:-$HOME/.local/bin}" go install ./cmd/workspace-launcher
 ```
 
-This installs:
-
-- `workspace-launcher`
-- `wl`
-
-By default both commands go to `${XDG_BIN_HOME:-$HOME/.local/bin}`.
-
-You can override the target directory with either `XDG_BIN_HOME` or `BIN_DIR`
-
-To build release archives locally:
-
-```sh
-make release-assets
-```
+Release archives are built and published by the GitHub release workflow when a
+`v*` tag is pushed.
 
 To generate a large synthetic workspace tree for performance testing:
 
 ```sh
-make bench-setup
+go run ./cmd/bench-setup
 ```
 
 ## Usage

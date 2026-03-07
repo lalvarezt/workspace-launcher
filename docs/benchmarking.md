@@ -3,20 +3,29 @@
 Create the synthetic fixture tree:
 
 ```sh
-make build
-make bench-setup
+mkdir -p .build
+go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
+go build -o ./.build/bench-setup ./cmd/bench-setup
+./.build/bench-setup
+```
+
+Or install the fixture generator directly with Go:
+
+```sh
+go install github.com/lalvarezt/workspace-launcher/cmd/bench-setup@latest
+bench-setup
 ```
 
 Re-running the command only creates missing directories. Rebuild from scratch:
 
 ```sh
-make bench-setup BENCH_ARGS=--force
+./.build/bench-setup --force
 ```
 
 Override the size or location:
 
 ```sh
-make bench-setup BENCH_COUNT=2500 BENCH_ROOT=/tmp/wl-bench
+./.build/bench-setup --count 2500 --root /tmp/wl-bench
 ```
 
 Run the launcher in built-in headless benchmark mode:

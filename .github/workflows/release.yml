@@ -24,6 +24,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - name: Resolve release tag
         id: meta
         shell: bash
@@ -50,7 +55,33 @@ jobs:
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build release assets
-        run: make release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist dist/bin
+          version="$(cat VERSION)"
+          version_no_v="${version#v}"
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+            goos="${target%_*}"
+            goarch="${target#*_}"
+            stage_dir="dist/stage/$target"
+            mkdir -p "$stage_dir"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+              -ldflags "-X main.version=$version" \
+              -o "$stage_dir/workspace-launcher" \
+              ./cmd/workspace-launcher
+            install -m 755 "$stage_dir/workspace-launcher" "dist/bin/workspace-launcher_${version_no_v}_${target}"
+            ln -sf workspace-launcher "$stage_dir/wl"
+            install -m 644 LICENSE "$stage_dir/LICENSE"
+            install -m 644 README.md "$stage_dir/README.md"
+            install -m 644 VERSION "$stage_dir/VERSION"
+            tar -C "$stage_dir" -czf "dist/workspace-launcher_${version_no_v}_${target}.tar.gz" workspace-launcher wl LICENSE README.md VERSION
+          done
+          (
+            cd dist
+            find . -maxdepth 2 -type f ! -name checksums.txt -print | LC_ALL=C sort | xargs sha256sum
+          ) > dist/checksums.txt
+          rm -rf dist/stage
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
