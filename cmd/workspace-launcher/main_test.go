@@ -202,6 +202,26 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	}
 }
 
+func TestSplitResultTreatsEmptyExpectLineAsNoKey(t *testing.T) {
+	key, selection := splitResult("\n/tmp/fzf\tentry")
+	if key != "" {
+		t.Fatalf("unexpected key: %q", key)
+	}
+	if selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected selection: %q", selection)
+	}
+}
+
+func TestSplitResultSeparatesExpectedKey(t *testing.T) {
+	key, selection := splitResult("ctrl-e\n/tmp/fzf\tentry")
+	if key != "ctrl-e" {
+		t.Fatalf("unexpected key: %q", key)
+	}
+	if selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected selection: %q", selection)
+	}
+}
+
 func makeDir(t *testing.T, dir string, epoch int64, marker string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

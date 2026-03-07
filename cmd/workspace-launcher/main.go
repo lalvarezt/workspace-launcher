@@ -778,7 +778,6 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		fzfPath,
 		"--ansi",
 		"--layout=reverse",
-		"--height=100%",
 		"--prompt=",
 		"--pointer=▌",
 		"--color=bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2",
@@ -862,13 +861,9 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 }
 
 func splitResult(result string) (string, string) {
-	if strings.HasPrefix(result, "ctrl-") {
-		parts := strings.SplitN(result, "\n", 2)
-		key := parts[0]
-		if len(parts) == 1 {
-			return key, ""
-		}
-		return key, parts[1]
+	parts := strings.SplitN(result, "\n", 2)
+	if len(parts) == 2 && (parts[0] == "" || strings.HasPrefix(parts[0], "ctrl-")) {
+		return parts[0], parts[1]
 	}
 	return "", result
 }

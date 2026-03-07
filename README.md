@@ -37,6 +37,95 @@ trees such as `~/.config` or `~/src`.
 - `fzf` in `PATH`, unless you provide a vendored binary at `bin/fzf`
 - `git` if you want git-state display or git-based recency sorting
 
+## Usage
+
+`workspace-launcher` scans the direct children of a root directory, sorts them
+by recency, and opens `fzf`. By default it prints the selected path, which
+makes it easy to plug into shell workflows.
+
+Jump to a workspace:
+
+```sh
+cd "$(workspace-launcher)"
+```
+
+Start a shell in the selected directory:
+
+```sh
+workspace-launcher --shell
+```
+
+Search under a different root:
+
+```sh
+workspace-launcher ~/src
+```
+
+Seed the query:
+
+```sh
+workspace-launcher --query fzf ~/src
+```
+
+Use it as a generic picker for config directories:
+
+```sh
+workspace-launcher --no-language --no-git ~/.config
+```
+
+## Recency Modes
+
+Recency sorting is controlled with `WORKSPACE_LAUNCHER_RECENCY`.
+
+- `mtime` (default): sorts by each child directory's modification time. This is
+  the fastest mode and works well for generic directory trees.
+- `git`: sorts git repositories by the latest commit timestamp. For directories
+  without `.git`, or when git metadata cannot be read, it falls back to
+  directory `mtime`.
+
+Use git-based recency when your root mostly contains repositories and you want
+recent commit activity to matter more than filesystem `mtime`:
+
+```sh
+WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
+```
+
+## Key Bindings
+
+- `Enter`: select the current match
+- `Ctrl-N`: create a new directory from the current query
+- `Ctrl-E`: open the selected directory in `$VISUAL` or `$EDITOR`
+- `Esc`: quit
+
+## CLI Options
+
+```text
+Usage: workspace-launcher [--print|--shell] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+```
+
+- `--print`: print the selected or created path (default)
+- `--shell`: start an interactive shell in the selected path
+- `--query TEXT`: start with an initial query
+- `--language` / `--no-language`: show or hide the language column
+- `--git` / `--no-git`: show or hide the git-state column
+- `-h` / `--help`: show help text
+- `-v` / `--version`: show version
+- `ROOT`: override the default root directory for this run
+
+## Configuration
+
+Configuration is done with environment variables:
+
+| Variable                             | Description                                                                |
+|--------------------------------------|----------------------------------------------------------------------------|
+| `WORKSPACE_LAUNCHER_ROOT`            | Default root directory. Defaults to `~/git-repos`.                         |
+| `WORKSPACE_LAUNCHER_RECENCY`         | Recency mode: `mtime` (default) or `git`.                                  |
+| `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
+| `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git-state column by default.                                     |
+| `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
+| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Marks dirty repositories as `git*`.                                        |
+| `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
+
 ## Install
 
 Install the launcher with Go:
@@ -45,7 +134,7 @@ Install the launcher with Go:
 go install github.com/lalvarezt/workspace-launcher/cmd/workspace-launcher@latest
 ```
 
-This installs the `workspace-launcher` binary into `GOBIN` or `$(go env GOPATH)/bin`.
+This installs `workspace-launcher` into `GOBIN` or `$(go env GOPATH)/bin`.
 
 Install the benchmark fixture generator with:
 
@@ -80,76 +169,11 @@ Install from the local checkout into a custom bin dir:
 GOBIN="${XDG_BIN_HOME:-$HOME/.local/bin}" go install ./cmd/workspace-launcher
 ```
 
-To generate a large synthetic workspace tree for performance testing:
+Generate a large synthetic workspace tree for performance testing:
 
 ```sh
 go run ./cmd/bench-setup
 ```
-
-## Usage
-
-By default, `workspace-launcher` prints the selected path. That makes it easy to
-use in shell functions, scripts, and commands such as `cd "$(workspace-launcher)"`.
-Use `--shell` when you want the launcher to open an interactive shell in the
-selected directory instead of returning the path.
-
-Print the selected path:
-
-```sh
-workspace-launcher
-```
-
-Start a shell in the selected directory:
-
-```sh
-workspace-launcher --shell
-```
-
-Seed the query and sort by latest git commit:
-
-```sh
-WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
-```
-
-Use it as a generic picker for config directories:
-
-```sh
-workspace-launcher --no-language --no-git ~/.config
-```
-
-## Key Bindings
-
-- `Enter`: select the current match
-- `Ctrl-N`: create a new directory from the current query
-- `Ctrl-E`: open the selected directory in `$VISUAL` or `$EDITOR`
-- `Esc`: quit
-
-## CLI Options
-
-```text
-Usage: workspace-launcher [--print|--shell] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
-```
-
-- `--print`: print the selected or created path
-- `--shell`: start an interactive shell in the selected path
-- `--query TEXT`: start with an initial query
-- `--language` / `--no-language`: show or hide the language column
-- `--git` / `--no-git`: show or hide the git-state column
-- `ROOT`: override the default root directory for this run
-
-## Configuration
-
-Configuration is done with environment variables:
-
-| Variable                             | Description                                                                |
-|--------------------------------------|----------------------------------------------------------------------------|
-| `WORKSPACE_LAUNCHER_ROOT`            | Default root directory. Defaults to `~/git-repos`.                         |
-| `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
-| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Marks dirty repositories as `git*`.                                        |
-| `WORKSPACE_LAUNCHER_RECENCY=git`     | Sorts by the latest commit timestamp instead of directory mtime.           |
-| `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
-| `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git-state column by default.                                     |
-| `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
 
 ## Notes
 
