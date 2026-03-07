@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: repo-launcher [--print|--shell] [--query TEXT] [ROOT]
+
+Launch an fzf-based repo picker.
+
+Options:
+  --print       Print the selected or created path (default)
+  --shell       Start an interactive shell in the selected path
+  --query TEXT  Start with an initial query
+  -h, --help    Show this help text
+
+Environment:
+  REPO_LAUNCHER_ROOT  Default root directory (default: ~/git-repos)
+EOF
+}
+
+die() {
+  printf 'repo-launcher: %s\n' "$*" >&2
+  exit 1
+}
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+repo_root=$(cd -- "$script_dir/.." && pwd -P)
+
+fzf_bin=${FZF_BIN:-}
+mode=print
+initial_query=
+root=${REPO_LAUNCHER_ROOT:-$HOME/git-repos}
+jobs=${REPO_LAUNCHER_JOBS:-8}
+now=$(printf '%(%s)T' -1)
+cwd=$(pwd -P)
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --print)
+      mode=print
+      ;;
+    --shell)
+      mode=shell
+      ;;
+    --query)
+      shift
+      [[ $# -gt 0 ]] || die "missing value for --query"
+      initial_query=$1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      root=$1
+      ;;
+  esac
+  shift
+done
+
+if [[ $# -gt 0 ]]; then
+  die "too many arguments"
+fi
+
+root=${root/#\~/$HOME}
+root=$(cd -- "$root" && pwd -P) || die "root does not exist: $root"
+
+resolve_fzf() {
+  if [[ -n $fzf_bin ]]; then
+    printf '%s\n' "$fzf_bin"
+  elif [[ -x $repo_root/bin/fzf ]]; then
+    printf '%s\n' "$repo_root/bin/fzf"
+  else
+    command -v fzf || die "fzf not found"
+  fi
+}
+
+format_age() {
+  local epoch diff days hours mins
+
+  epoch=$1
+  diff=$((now - epoch))
+  if ((diff < 0)); then
+    diff=0
+  fi
+
+  days=$((diff / 86400))
+  hours=$(((diff % 86400) / 3600))
+  mins=$(((diff % 3600) / 60))
+
+  printf '%02dd %02dh %02dm' "$days" "$hours" "$mins"
+}
+
+detect_language() {
+  local dir=$1
+
+  if [[ -f $dir/go.mod ]]; then
+    printf 'Go'
+  elif [[ -f $dir/Cargo.toml ]]; then
+    printf 'Rust'
+  elif [[ -f $dir/package.json ]]; then
+    printf 'Node'
+  elif [[ -f $dir/pyproject.toml || -f $dir/requirements.txt || -f $dir/setup.py ]]; then
+    printf 'Python'
+  elif [[ -f $dir/init.lua || -f $dir/.luarc.json ]]; then
+    printf 'Lua'
+  elif [[ -f $dir/Gemfile ]]; then
+    printf 'Ruby'
+  elif [[ -f $dir/flake.nix || -f $dir/default.nix ]]; then
+    printf 'Nix'
+  else
+    printf '-'
+  fi
+}
+
+detect_git_state() {
+  local dir=$1
+
+  if [[ ! -e $dir/.git ]]; then
+    printf '-'
+    return
+  fi
+
+  if [[ -n $(git -C "$dir" status --porcelain --untracked-files=normal 2> /dev/null) ]]; then
+    printf 'git*'
+  else
+    printf 'git'
+  fi
+}
+
+repo_epoch() {
+  local dir=$1 epoch
+
+  epoch=$(git -C "$dir" -c log.showSignature=false log -1 --format=%ct 2> /dev/null || true)
+  if [[ -n $epoch ]]; then
+    printf '%s\n' "$epoch"
+  else
+    stat -c %Y "$dir"
+  fi
+}
+
+is_current_repo() {
+  local dir=$1
+
+  [[ $cwd == "$dir" || $cwd == "$dir"/* ]]
+}
+
+describe_repo() {
+  local dir=$1 epoch date_label age_label name lang git_state marker display
+
+  epoch=$(repo_epoch "$dir")
+  printf -v date_label '%(%F)T' "$epoch"
+  age_label=$(format_age "$epoch")
+  name=${dir##*/}
+  lang=$(detect_language "$dir")
+  git_state=$(detect_git_state "$dir")
+  marker=' '
+  if is_current_repo "$dir"; then
+    marker='*'
+  fi
+
+  printf -v display '%s %-32s %-8s %-4s %s (%s)' \
+    "$marker" "$name" "$lang" "$git_state" "$date_label" "$age_label"
+
+  printf '%s\t%s\t%s\n' "$epoch" "$dir" "$display"
+}
+
+build_candidates() {
+  local dir
+  local -a dirs=()
+
+  shopt -s nullglob
+  for dir in "$root"/*; do
+    [[ -d $dir ]] || continue
+    dirs+=("$dir")
+  done
+
+  ((${#dirs[@]} > 0)) || return 0
+
+  if ((jobs <= 1 || ${#dirs[@]} == 1)); then
+    for dir in "${dirs[@]}"; do
+      describe_repo "$dir"
+    done
+    return
+  fi
+
+  export now cwd
+  export -f format_age detect_language detect_git_state repo_epoch is_current_repo describe_repo
+  printf '%s\0' "${dirs[@]}" | xargs -0 -n1 -P "$jobs" bash -c 'describe_repo "$1"' _
+}
+
+validate_new_name() {
+  local name=$1
+
+  [[ -n $name ]] || die "empty query"
+  [[ $name != */* ]] || die "new repo name cannot contain '/'"
+  [[ $name != '.' && $name != '..' ]] || die "invalid repo name: $name"
+}
+
+pick_repo() {
+  local fzf_cmd=$1
+
+  build_candidates \
+    | sort -t $'\t' -k1,1nr \
+    | cut -f2- \
+    | "$fzf_cmd" \
+        --layout=reverse \
+        --height=100% \
+        --prompt='' \
+        --ghost='Type to filter, Enter to open, Ctrl-N to create' \
+        --input-border \
+        --input-label=' Search/New ' \
+        --list-border \
+        --list-label=' Folders ' \
+        --footer='Enter open | Ctrl-N create | Esc quit' \
+        --footer-border=line \
+        --info=hidden \
+        --delimiter=$'\t' \
+        --with-nth=2.. \
+        --query="$initial_query" \
+        --bind 'enter:accept-or-print-query' \
+        --bind 'ctrl-n:print({q})+accept' \
+        --bind 'result:transform-list-label:printf " Folders (%s) " "$FZF_MATCH_COUNT"'
+}
+
+main() {
+  local fzf_cmd selection target new_path
+
+  fzf_cmd=$(resolve_fzf)
+  selection=$(pick_repo "$fzf_cmd") || exit 1
+
+  if [[ -z $selection ]]; then
+    exit 1
+  fi
+
+  if [[ $selection == *$'\t'* ]]; then
+    target=${selection%%$'\t'*}
+  else
+    validate_new_name "$selection"
+    new_path=$root/$selection
+    mkdir -p -- "$new_path"
+    target=$new_path
+  fi
+
+  case "$mode" in
+    print)
+      printf '%s\n' "$target"
+      ;;
+    shell)
+      cd -- "$target"
+      exec "${SHELL:-/bin/bash}" -il
+      ;;
+  esac
+}
+
+main "$@"
