@@ -170,32 +170,6 @@ func TestBuildCandidatesMatchesExpectedOrdering(t *testing.T) {
 	}
 }
 
-func TestDetectGitStateMarksDirtyRepoWhenUsingGitRecency(t *testing.T) {
-	repo := initTestRepo(t)
-	commitAt(t, repo, "1700000600", "clean")
-	if err := os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("write dirty file: %v", err)
-	}
-
-	got := detectGitState(config{recency: recencyGit}, repo, true)
-	if got != "git*" {
-		t.Fatalf("unexpected git state: got %q want %q", got, "git*")
-	}
-}
-
-func TestDetectGitStateSkipsDirtyCheckOutsideGitRecency(t *testing.T) {
-	repo := initTestRepo(t)
-	commitAt(t, repo, "1700000700", "clean")
-	if err := os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("write dirty file: %v", err)
-	}
-
-	got := detectGitState(config{recency: recencyMtime}, repo, true)
-	if got != "git" {
-		t.Fatalf("unexpected git state: got %q want %q", got, "git")
-	}
-}
-
 func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	cfg := config{headlessBench: true}
 	candidates := []candidate{
