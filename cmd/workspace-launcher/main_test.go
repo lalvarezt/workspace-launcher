@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,6 +92,100 @@ func TestGitLastCommitEpochFastWorktree(t *testing.T) {
 	}
 	if epoch != 1700000300 {
 		t.Fatalf("unexpected epoch: got %d want %d", epoch, 1700000300)
+	}
+}
+
+func TestInspectGitMetaRegularRepoBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	meta := inspectGitMeta(repo, true, true, true, false)
+
+	if !meta.present {
+		t.Fatal("expected repo to be marked present")
+	}
+	if meta.isWorktree {
+		t.Fatal("expected regular repo, got worktree")
+	}
+	if meta.branchLabel != currentBranchName(t, repo) {
+		t.Fatalf("unexpected branch label: got %q want %q", meta.branchLabel, currentBranchName(t, repo))
+	}
+	if meta.epoch != 1700000300 {
+		t.Fatalf("unexpected epoch: got %d want %d", meta.epoch, 1700000300)
+	}
+}
+
+func TestInspectGitMetaDetachedHead(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "checkout", "--detach", head)
+
+	meta := inspectGitMeta(repo, true, true, false, false)
+
+	if meta.branchLabel != "detached@"+head[:7] {
+		t.Fatalf("unexpected detached label: got %q want %q", meta.branchLabel, "detached@"+head[:7])
+	}
+}
+
+func TestInspectGitMetaUnbornBranch(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "--initial-branch=feature/unborn")
+	runGit(t, repo, "config", "user.name", "test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+
+	meta := inspectGitMeta(repo, true, true, true, false)
+
+	if meta.branchLabel != "feature/unborn" {
+		t.Fatalf("unexpected unborn branch label: got %q want %q", meta.branchLabel, "feature/unborn")
+	}
+	if meta.epoch != 0 {
+		t.Fatalf("unexpected epoch for unborn repo: got %d want 0", meta.epoch)
+	}
+}
+
+func TestInspectGitMetaWorktreeBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", "-b", "feature/worktree-ui", worktree)
+
+	meta := inspectGitMeta(worktree, false, true, true, false)
+
+	if !meta.isWorktree {
+		t.Fatal("expected linked worktree")
+	}
+	if meta.branchLabel != "feature/worktree-ui" {
+		t.Fatalf("unexpected worktree branch label: got %q want %q", meta.branchLabel, "feature/worktree-ui")
+	}
+	if meta.epoch != 1700000300 {
+		t.Fatalf("unexpected epoch: got %d want %d", meta.epoch, 1700000300)
+	}
+}
+
+func TestInspectGitMetaWorktreeUnderModulesPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "modules")
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	runGit(t, repo, "init", "--initial-branch=main")
+	runGit(t, repo, "config", "user.name", "test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	commitAt(t, repo, "1700000300", "base")
+
+	worktree := filepath.Join(root, "wt")
+	runGit(t, repo, "worktree", "add", "-b", "feature/modules-path", worktree)
+
+	meta := inspectGitMeta(worktree, false, true, true, false)
+
+	if !meta.isWorktree {
+		t.Fatal("expected linked worktree")
+	}
+	if meta.isSubmodule {
+		t.Fatal("expected normal worktree, got submodule")
 	}
 }
 
@@ -215,7 +310,7 @@ func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/b\tbeta" {
+	if got != "/tmp/b\tbeta\tbeta" {
 		t.Fatalf("unexpected selection: %q", got)
 	}
 }
@@ -231,7 +326,7 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/a\talpha" {
+	if got != "/tmp/a\talpha\talpha" {
 		t.Fatalf("unexpected filtered selection: %q", got)
 	}
 }
@@ -245,6 +340,78 @@ func TestPickRepoHeadlessOnlyMatchesNameField(t *testing.T) {
 	_, err := pickRepoHeadless(cfg, candidates)
 	if err == nil {
 		t.Fatal("expected query against root column to miss")
+	}
+}
+
+func TestPickRepoHeadlessMatchesBranchField(t *testing.T) {
+	cfg := config{headlessBench: true, initialQuery: "worktree-ui"}
+	candidates := []candidate{
+		{path: "/tmp/repo", display: "repo", matchText: "repo feature/worktree-ui"},
+	}
+
+	got, err := pickRepoHeadless(cfg, candidates)
+	if err != nil {
+		t.Fatalf("pickRepoHeadless returned error: %v", err)
+	}
+	if got != "/tmp/repo\trepo feature/worktree-ui\trepo" {
+		t.Fatalf("unexpected branch selection: %q", got)
+	}
+}
+
+func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
+	fzfPath := writeTestScript(t, "#!/bin/sh\nexit 130\n")
+
+	result, err := pickRepo(config{}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	if err != nil {
+		t.Fatalf("pickRepo returned error: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected empty result on abort, got %q", result)
+	}
+}
+
+func TestPickRepoIgnoresBrokenPipeOnAbortExit(t *testing.T) {
+	fzfPath := writeTestScript(t, "#!/bin/sh\nexec 0<&-\nexit 130\n")
+
+	candidates := make([]candidate, 4096)
+	display := strings.Repeat("x", 256)
+	for i := range candidates {
+		candidates[i] = candidate{
+			path:      filepath.Join("/tmp", strconv.Itoa(i)),
+			display:   display,
+			matchText: display,
+		}
+	}
+
+	result, err := pickRepo(config{}, fzfPath, candidates)
+	if err != nil {
+		t.Fatalf("pickRepo returned error: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected empty result on abort, got %q", result)
+	}
+}
+
+func TestRunReturnsZeroWhenPickerClosesWithoutSelection(t *testing.T) {
+	root := t.TempDir()
+	makeDir(t, filepath.Join(root, "repo"), 1700001000, "")
+
+	t.Setenv("FZF_BIN", writeTestScript(t, "#!/bin/sh\nexit 130\n"))
+	t.Setenv("COLUMNS", "80")
+
+	origArgs := os.Args
+	defer func() {
+		os.Args = origArgs
+	}()
+	os.Args = []string{"workspace-launcher", root}
+
+	err := run()
+	var exitErr exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exitCodeError, got %v", err)
+	}
+	if exitErr.code != 0 {
+		t.Fatalf("unexpected exit code: got %d want 0", exitErr.code)
 	}
 }
 
@@ -535,9 +702,6 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 	if !cfg.showRoot {
 		t.Fatal("expected root column to be enabled")
 	}
-	if cfg.searchFieldIndex != 2 {
-		t.Fatalf("unexpected searchFieldIndex: got %d want %d", cfg.searchFieldIndex, 2)
-	}
 	if cfg.nameWidth < 16 {
 		t.Fatalf("expected nameWidth >= 16, got %d", cfg.nameWidth)
 	}
@@ -546,6 +710,105 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 	}
 	if cfg.rootLabels[rootA] != "src" || cfg.rootLabels[rootB] != "archive" {
 		t.Fatalf("unexpected root labels: %v", cfg.rootLabels)
+	}
+}
+
+func TestRenderGitFieldUsesGitIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true}, "main", 12)
+	if !strings.Contains(field, "  main") {
+		t.Fatalf("unexpected git field: %q", field)
+	}
+}
+
+func TestRenderGitFieldUsesWorktreeIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui", 24)
+	if !strings.Contains(field, "󰙅  feature/worktree-ui") {
+		t.Fatalf("unexpected worktree field: %q", field)
+	}
+}
+
+func TestRenderGitFieldUsesLockIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true, isLocked: true}, "main", 12)
+	if !strings.Contains(field, "") {
+		t.Fatalf("unexpected locked field: %q", field)
+	}
+}
+
+func TestRenderGitFieldUsesSubmoduleIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true, isSubmodule: true}, "main", 12)
+	if !strings.Contains(field, "") {
+		t.Fatalf("unexpected submodule field: %q", field)
+	}
+}
+
+func TestRenderGitFieldMarksNonGitEntries(t *testing.T) {
+	field := renderGitField(gitMeta{}, "-", 3)
+	if !strings.Contains(field, "-") {
+		t.Fatalf("unexpected non-git field: %q", field)
+	}
+}
+
+func TestDescribeRepoIncludesBranchTextInGitField(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	cfg := config{
+		showLanguage: false,
+		showGit:      true,
+		now:          1700000400,
+		nameWidth:    24,
+	}
+
+	cand, err := describeRepo(cfg, childDir{
+		name:     filepath.Base(repo),
+		path:     repo,
+		modEpoch: 1700000200,
+	}, true)
+	if err != nil {
+		t.Fatalf("describeRepo returned error: %v", err)
+	}
+
+	fields := strings.Split(cand.display, "\t")
+	if len(fields) != 3 {
+		t.Fatalf("unexpected field count: got %d want %d", len(fields), 3)
+	}
+	if !strings.Contains(fields[1], currentBranchName(t, repo)) {
+		t.Fatalf("expected merged git field in %q", fields[1])
+	}
+}
+
+func TestRenderGitFieldTruncatesLongNames(t *testing.T) {
+	field := renderGitField(gitMeta{present: true}, "feature/this-is-a-very-long-branch-name", 12)
+	if !strings.Contains(field, "...") {
+		t.Fatalf("expected truncated git field, got %q", field)
+	}
+}
+
+func TestComputeGitColumnWidthUsesObservedContent(t *testing.T) {
+	width := computeGitColumnWidth([]repoDetails{
+		{git: gitMeta{present: true}, matchText: "a"},
+		{git: gitMeta{present: true, isWorktree: true, branchLabel: "feature/demo"}},
+	})
+	if width != displayWidth("󰙅  feature/demo") {
+		t.Fatalf("unexpected git width: got %d want %d", width, displayWidth("󰙅  feature/demo"))
+	}
+}
+
+func TestComputeGitColumnWidthClampsAtMax(t *testing.T) {
+	width := computeGitColumnWidth([]repoDetails{
+		{git: gitMeta{present: true, branchLabel: "feature/this-is-a-very-long-branch-name-that-should-be-clamped"}},
+	})
+	if width != gitMaxWidth {
+		t.Fatalf("unexpected clamped width: got %d want %d", width, gitMaxWidth)
+	}
+}
+
+func TestDisplayWidthTreatsAccentedLatinAsSingleWidth(t *testing.T) {
+	if got := displayWidth("cafe"); got != 4 {
+		t.Fatalf("unexpected ASCII width: got %d want 4", got)
+	}
+	if got := displayWidth("café"); got != 4 {
+		t.Fatalf("unexpected accented width: got %d want 4", got)
 	}
 }
 
@@ -667,4 +930,13 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v in %s failed: %v\n%s", args, dir, err, output)
 	}
 	return string(output)
+}
+
+func writeTestScript(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test-script.sh")
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write test script: %v", err)
+	}
+	return path
 }

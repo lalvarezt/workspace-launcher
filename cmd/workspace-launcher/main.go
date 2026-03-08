@@ -9,16 +9,20 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
-	"unicode/utf8"
+	"unicode"
 
 	shellscripts "github.com/lalvarezt/workspace-launcher/shell"
+	"golang.org/x/term"
+	"golang.org/x/text/width"
 )
 
 const appName = "workspace-launcher"
@@ -39,51 +43,57 @@ const (
 	columnGap      = "   "
 	gapWidth       = 3
 	rootMinWidth   = 8
-	rootMaxWidth   = 24
+	rootMaxWidth   = 40
 	rootFloorWidth = 4
 	langWidth      = 12
-	langLabelWidth = langWidth - 3
-	gitWidth       = 5
+	langLabelWidth = langWidth - 4
+	gitMinWidth    = 3
+	gitMaxWidth    = 48
+	nameMinWidth   = 16
 	ageWidth       = 12
 	chromeWidth    = 18
 )
 
 const (
-	cReset    = "\033[0m"
-	cDim      = "\033[38;5;244m"
-	cName     = "\033[38;5;252m"
-	cCurrent  = "\033[38;5;223m"
-	cGo       = "\033[38;5;81m"
-	cRust     = "\033[38;5;209m"
-	cPython   = "\033[38;5;221m"
-	cNode     = "\033[38;5;78m"
-	cLua      = "\033[38;5;111m"
-	cRuby     = "\033[38;5;203m"
-	cNix      = "\033[38;5;110m"
-	cMisc     = "\033[38;5;180m"
-	cGit      = "\033[38;5;109m"
-	cGitDirty = "\033[38;5;215m"
-	cTime     = "\033[38;5;246m"
+	cReset     = "\033[0m"
+	cDim       = "\033[38;5;244m"
+	cName      = "\033[38;5;252m"
+	cCurrent   = "\033[38;5;223m"
+	cGo        = "\033[38;5;81m"
+	cRust      = "\033[38;5;209m"
+	cPython    = "\033[38;5;221m"
+	cNode      = "\033[38;5;78m"
+	cLua       = "\033[38;5;111m"
+	cRuby      = "\033[38;5;203m"
+	cNix       = "\033[38;5;110m"
+	cMisc      = "\033[38;5;180m"
+	cGit       = "\033[38;5;109m"
+	cGitDirty  = "\033[38;5;215m"
+	cWorktree  = "\033[38;5;151m"
+	cGitLock   = "\033[38;5;180m"
+	cSubmodule = "\033[38;5;179m"
+	cTime      = "\033[38;5;246m"
 )
 
 type config struct {
-	mode             string
-	shellBindings    bool
-	initialQuery     string
-	roots            []string
-	rootLabels       map[string]string
-	jobs             int
-	gitDirty         bool
-	recency          string
-	showLanguage     bool
-	showGit          bool
-	showRoot         bool
-	headlessBench    bool
-	now              int64
-	cwd              string
-	rootLabelWidth   int
-	nameWidth        int
-	searchFieldIndex int
+	mode           string
+	shellBindings  bool
+	initialQuery   string
+	roots          []string
+	rootLabels     map[string]string
+	jobs           int
+	gitDirty       bool
+	recency        string
+	showLanguage   bool
+	showGit        bool
+	showRoot       bool
+	headlessBench  bool
+	now            int64
+	cwd            string
+	cols           int
+	gitColumnWidth int
+	rootLabelWidth int
+	nameWidth      int
 }
 
 type childDir struct {
@@ -101,8 +111,17 @@ type candidate struct {
 	epoch     int64
 }
 
+type repoDetails struct {
+	child     childDir
+	lang      string
+	git       gitMeta
+	matchText string
+	epoch     int64
+}
+
 type dirFacts struct {
 	hasGit          bool
+	gitIsDir        bool
 	hasGoMod        bool
 	hasCargoToml    bool
 	hasPackageJSON  bool
@@ -114,6 +133,17 @@ type dirFacts struct {
 	hasGemfile      bool
 	hasFlakeNix     bool
 	hasDefaultNix   bool
+}
+
+type gitMeta struct {
+	present     bool
+	isWorktree  bool
+	isLocked    bool
+	isSubmodule bool
+	branchLabel string
+	headHash    string
+	epoch       int64
+	dirty       bool
 }
 
 type gitLayout struct {
@@ -176,7 +206,7 @@ func run() error {
 		return err
 	}
 	if result == "" {
-		return exitCodeError{code: 1}
+		return exitCodeError{code: 0}
 	}
 
 	key, selection := splitResult(result)
@@ -281,11 +311,9 @@ func parseConfig(args []string) (config, error) {
 	}
 	cfg.roots = resolvedRoots
 	cfg.showRoot = len(cfg.roots) > 1
-	cfg.searchFieldIndex = 1
 	if cfg.showRoot {
 		cfg.rootLabels = buildRootLabels(cfg.roots)
 		cfg.rootLabelWidth = computeRootLabelWidth(cfg.rootLabels)
-		cfg.searchFieldIndex = 2
 	}
 
 	cwd, err := os.Getwd()
@@ -298,28 +326,8 @@ func parseConfig(args []string) (config, error) {
 		cfg.cwd = cwd
 	}
 
-	cols := parsePositiveEnvInt("COLUMNS", 120)
-	metaWidth := ageWidth
-	if cfg.showLanguage {
-		metaWidth += langWidth + gapWidth
-	}
-	if cfg.showGit {
-		metaWidth += gitWidth + gapWidth
-	}
-	cfg.nameWidth = cols - chromeWidth - metaWidth
-	if cfg.showRoot {
-		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
-		if cfg.nameWidth < 16 {
-			cfg.rootLabelWidth -= 16 - cfg.nameWidth
-			if cfg.rootLabelWidth < rootFloorWidth {
-				cfg.rootLabelWidth = rootFloorWidth
-			}
-			cfg.nameWidth = cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
-		}
-	}
-	if cfg.nameWidth < 16 {
-		cfg.nameWidth = 16
-	}
+	cfg.cols = resolveColumns()
+	applyLayoutWidths(&cfg)
 
 	return cfg, nil
 }
@@ -338,8 +346,8 @@ Options:
   --query TEXT     Start with an initial query
   --language       Show the language column (default)
   --no-language    Hide the language column
-  --git            Show the git-state column (default)
-  --no-git         Hide the git-state column
+  --git            Show the git metadata column (default)
+  --no-git         Hide the git metadata column
   -v, --version    Show version
   -h, --help       Show this help text
 
@@ -350,10 +358,10 @@ Shell integration:
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directories, split with the OS path list separator (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
-  WORKSPACE_LAUNCHER_GIT_DIRTY      Show dirty repos with git* when set to 1 (default: 0)
+  WORKSPACE_LAUNCHER_GIT_DIRTY      Highlight dirty git entries when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
-  WORKSPACE_LAUNCHER_SHOW_GIT       Show the git-state column when set to 1 (default: 1)
+  WORKSPACE_LAUNCHER_SHOW_GIT       Show the git metadata column when set to 1 (default: 1)
 `, filepath.Base(os.Args[0]))
 }
 
@@ -434,23 +442,23 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		return nil, nil
 	}
 
-	results := make([]candidate, len(children))
+	details := make([]repoDetails, len(children))
 	needsInspect := cfg.showLanguage || cfg.showGit || cfg.recency == recencyGit
 	if !needsInspect || cfg.jobs <= 1 || len(children) == 1 {
 		for i, child := range children {
-			cand, err := describeRepo(cfg, child, needsInspect)
+			detail, err := inspectRepo(cfg, child, needsInspect)
 			if err != nil {
 				return nil, err
 			}
-			results[i] = cand
+			details[i] = detail
 		}
-		return results, nil
+		return renderCandidates(cfg, details), nil
 	}
 
 	type jobResult struct {
-		index int
-		cand  candidate
-		err   error
+		index  int
+		detail repoDetails
+		err    error
 	}
 
 	jobs := make(chan int, len(children))
@@ -466,8 +474,8 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				cand, err := describeRepo(cfg, children[idx], needsInspect)
-				out <- jobResult{index: idx, cand: cand, err: err}
+				detail, err := inspectRepo(cfg, children[idx], needsInspect)
+				out <- jobResult{index: idx, detail: detail, err: err}
 			}
 		}()
 	}
@@ -488,29 +496,140 @@ func buildCandidates(cfg config) ([]candidate, error) {
 			firstErr = res.err
 			continue
 		}
-		results[res.index] = res.cand
+		details[res.index] = res.detail
 	}
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	return results, nil
+	return renderCandidates(cfg, details), nil
 }
 
-func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
+func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) {
 	facts := dirFacts{}
 	if inspect {
 		needGit := cfg.showGit || cfg.recency == recencyGit
 		needLanguage := cfg.showLanguage
-		languageDetected := false
-		entries, err := os.ReadDir(child.path)
+		var err error
+		facts, err = collectDirFacts(child.path, needGit, needLanguage)
 		if err != nil {
-			return candidate{}, err
+			return repoDetails{}, err
 		}
+	}
+
+	epoch := child.modEpoch
+	git := gitMeta{}
+	if facts.hasGit && (cfg.showGit || cfg.recency == recencyGit) {
+		git = inspectGitMeta(child.path, facts.gitIsDir, cfg.showGit, cfg.recency == recencyGit, cfg.gitDirty && cfg.showGit)
+	}
+	if cfg.recency == recencyGit && git.epoch > 0 {
+		epoch = git.epoch
+	}
+
+	lang := ""
+	if cfg.showLanguage {
+		lang = detectLanguage(facts)
+	}
+
+	matchText := child.name
+	if git.branchLabel != "" && git.branchLabel != "-" {
+		matchText += " " + git.branchLabel
+	}
+
+	return repoDetails{
+		child:     child,
+		lang:      lang,
+		git:       git,
+		matchText: matchText,
+		epoch:     epoch,
+	}, nil
+}
+
+func renderCandidates(cfg config, details []repoDetails) []candidate {
+	if cfg.showGit {
+		cfg.gitColumnWidth = computeGitColumnWidth(details)
+	} else {
+		cfg.gitColumnWidth = 0
+	}
+	applyLayoutWidths(&cfg)
+
+	out := make([]candidate, len(details))
+	for i, detail := range details {
+		branch := detail.git.branchLabel
+		if branch == "" {
+			branch = "-"
+		}
+
+		markerField := paintField(cDim, " ")
+		if isCurrentRepo(cfg.cwd, detail.child.path) {
+			markerField = paintField(cCurrent, "*")
+		}
+		nameField := markerField + " " + paintField(cName, fitField(detail.child.name, cfg.nameWidth))
+		ageField := paintField(cTime, fitField(formatAge(cfg.now, detail.epoch), ageWidth))
+
+		fields := make([]string, 0, 4)
+		if cfg.showRoot {
+			fields = append(fields, paintField(cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
+		}
+		fields = append(fields, nameField)
+		if cfg.showLanguage {
+			fields = append(fields, renderLangField(detail.lang))
+		}
+		if cfg.showGit {
+			fields = append(fields, renderGitField(detail.git, branch, cfg.gitColumnWidth))
+		}
+		fields = append(fields, ageField)
+
+		out[i] = candidate{
+			path:      detail.child.path,
+			display:   strings.Join(fields, "\t"),
+			matchText: detail.matchText,
+			epoch:     detail.epoch,
+		}
+	}
+	return out
+}
+
+func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
+	detail, err := inspectRepo(cfg, child, inspect)
+	if err != nil {
+		return candidate{}, err
+	}
+	if cfg.cols == 0 {
+		metaWidth := ageWidth
+		if cfg.showLanguage {
+			metaWidth += langWidth + gapWidth
+		}
+		if cfg.showGit {
+			if cfg.gitColumnWidth == 0 {
+				cfg.gitColumnWidth = computeGitColumnWidth([]repoDetails{detail})
+			}
+			metaWidth += cfg.gitColumnWidth + gapWidth
+		}
+		cfg.cols = cfg.nameWidth + chromeWidth + metaWidth
+		if cfg.showRoot {
+			cfg.cols += cfg.rootLabelWidth + gapWidth
+		}
+	}
+	return renderCandidates(cfg, []repoDetails{detail})[0], nil
+}
+
+func collectDirFacts(dir string, needGit, needLanguage bool) (dirFacts, error) {
+	facts := dirFacts{}
+	languageDetected := false
+
+	file, err := os.Open(dir)
+	if err != nil {
+		return facts, err
+	}
+	defer file.Close()
+
+	for {
+		entries, readErr := file.ReadDir(16)
 		for _, entry := range entries {
-			name := entry.Name()
-			switch name {
+			switch entry.Name() {
 			case ".git":
 				facts.hasGit = true
+				facts.gitIsDir = entry.IsDir()
 			case "go.mod":
 				facts.hasGoMod = true
 			case "Cargo.toml":
@@ -539,54 +658,17 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 				languageDetected = true
 			}
 			if (!needGit || facts.hasGit) && (!needLanguage || languageDetected) {
-				break
+				return facts, nil
 			}
 		}
-	}
 
-	epoch := child.modEpoch
-	if cfg.recency == recencyGit && facts.hasGit {
-		if gitEpoch, err := gitLastCommitEpochFast(child.path); err == nil && gitEpoch > 0 {
-			epoch = gitEpoch
+		if errors.Is(readErr, io.EOF) {
+			return facts, nil
+		}
+		if readErr != nil {
+			return facts, readErr
 		}
 	}
-
-	lang := ""
-	if cfg.showLanguage {
-		lang = detectLanguage(facts)
-	}
-
-	gitState := ""
-	if cfg.showGit {
-		gitState = detectGitState(cfg, child.path, facts.hasGit)
-	}
-
-	markerField := paintField(cDim, " ")
-	if isCurrentRepo(cfg.cwd, child.path) {
-		markerField = paintField(cCurrent, "*")
-	}
-	nameField := markerField + " " + paintField(cName, fitField(child.name, cfg.nameWidth))
-	ageField := paintField(cTime, fitField(formatAge(cfg.now, epoch), ageWidth))
-
-	fields := make([]string, 0, 4)
-	if cfg.showRoot {
-		fields = append(fields, paintField(cDim, fitField(child.rootLabel, cfg.rootLabelWidth)))
-	}
-	fields = append(fields, nameField)
-	if cfg.showLanguage {
-		fields = append(fields, renderLangField(lang))
-	}
-	if cfg.showGit {
-		fields = append(fields, renderGitField(gitState))
-	}
-	fields = append(fields, ageField)
-
-	return candidate{
-		path:      child.path,
-		display:   strings.Join(fields, "\t"),
-		matchText: child.name,
-		epoch:     epoch,
-	}, nil
 }
 
 func buildRootLabels(roots []string) map[string]string {
@@ -682,13 +764,51 @@ func rootLabelAtDepth(info rootLabelParts, depth int) string {
 func computeRootLabelWidth(labels map[string]string) int {
 	longest := rootMinWidth
 	for _, label := range labels {
-		width := utf8.RuneCountInString(label)
+		width := displayWidth(label)
 		if width > longest {
 			longest = width
 		}
 	}
 	if longest > rootMaxWidth {
 		return rootMaxWidth
+	}
+	return longest
+}
+
+func applyLayoutWidths(cfg *config) {
+	metaWidth := ageWidth
+	if cfg.showLanguage {
+		metaWidth += langWidth + gapWidth
+	}
+	if cfg.showGit {
+		metaWidth += cfg.gitColumnWidth + gapWidth
+	}
+	cfg.nameWidth = cfg.cols - chromeWidth - metaWidth
+	if cfg.showRoot {
+		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
+		if cfg.nameWidth < nameMinWidth {
+			cfg.rootLabelWidth -= nameMinWidth - cfg.nameWidth
+			if cfg.rootLabelWidth < rootFloorWidth {
+				cfg.rootLabelWidth = rootFloorWidth
+			}
+			cfg.nameWidth = cfg.cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
+		}
+	}
+	if cfg.nameWidth < nameMinWidth {
+		cfg.nameWidth = nameMinWidth
+	}
+}
+
+func computeGitColumnWidth(details []repoDetails) int {
+	longest := gitMinWidth
+	for _, detail := range details {
+		width := displayWidth(gitFieldText(detail.git, detail.git.branchLabel))
+		if width > longest {
+			longest = width
+		}
+	}
+	if longest > gitMaxWidth {
+		return gitMaxWidth
 	}
 	return longest
 }
@@ -714,30 +834,126 @@ func detectLanguage(facts dirFacts) string {
 	}
 }
 
-func detectGitState(cfg config, dir string, hasGit bool) string {
-	if !hasGit {
-		return "-"
+func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool) gitMeta {
+	meta := gitMeta{
+		present:     true,
+		branchLabel: "-",
 	}
-	if !cfg.gitDirty {
-		return "git"
+
+	if !wantBranch && !wantEpoch {
+		meta.isWorktree = !gitIsDir
+		if !gitIsDir {
+			gitDir, isWorktree, err := inspectDotGit(dir)
+			if err == nil {
+				meta.isWorktree = isWorktree
+				meta.isSubmodule, meta.isLocked = classifyLinkedGitDir(gitDir, isWorktree)
+				if meta.isSubmodule {
+					meta.isWorktree = false
+				}
+			}
+		}
+		if wantDirty {
+			if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
+				meta.dirty = dirty
+			}
+		}
+		return meta
 	}
-	dirty, err := gitIsDirty(dir)
-	if err != nil {
-		return "git"
+
+	gitDir := filepath.Join(dir, ".git")
+	isWorktree := false
+	if !gitIsDir {
+		var err error
+		gitDir, isWorktree, err = inspectDotGit(dir)
+		if err != nil {
+			if wantDirty {
+				if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
+					meta.dirty = dirty
+				}
+			}
+			if wantEpoch {
+				if epoch, epochErr := gitLastCommitEpochSlow(dir); epochErr == nil && epoch > 0 {
+					meta.epoch = epoch
+				}
+			}
+			return meta
+		}
 	}
-	if dirty {
-		return "git*"
+
+	meta.isWorktree = isWorktree
+	meta.isSubmodule, meta.isLocked = classifyLinkedGitDir(gitDir, isWorktree)
+	if meta.isSubmodule {
+		meta.isWorktree = false
 	}
-	return "git"
+	if wantEpoch {
+		layout, layoutErr := finalizeGitLayout(gitDir)
+		if layoutErr == nil {
+			head, headErr := readHead(layout)
+			if headErr == nil {
+				if wantBranch {
+					meta.branchLabel = formatHeadLabel(head)
+				}
+				if hash, resolveErr := resolveHeadHashFromHead(layout, head); resolveErr == nil {
+					meta.headHash = hash
+					if epoch, readErr := readCommitEpoch(layout, hash); readErr == nil && epoch > 0 {
+						meta.epoch = epoch
+					}
+				}
+			}
+		}
+	} else {
+		head, headErr := readHeadFile(gitDir)
+		if headErr == nil && wantBranch {
+			meta.branchLabel = formatHeadLabel(head)
+		}
+	}
+
+	if wantEpoch && meta.epoch <= 0 {
+		if epoch, epochErr := gitLastCommitEpochSlow(dir); epochErr == nil && epoch > 0 {
+			meta.epoch = epoch
+		}
+	}
+	if wantDirty {
+		if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
+			meta.dirty = dirty
+		}
+	}
+
+	return meta
+}
+
+func classifyLinkedGitDir(gitDir string, isWorktree bool) (bool, bool) {
+	if !isWorktree {
+		return false, false
+	}
+
+	cleanParts := strings.Split(filepath.Clean(gitDir), string(filepath.Separator))
+	gitIndex := -1
+	for i := len(cleanParts) - 1; i >= 0; i-- {
+		if cleanParts[i] == ".git" {
+			gitIndex = i
+			break
+		}
+	}
+	if gitIndex >= 0 && gitIndex+1 < len(cleanParts) && cleanParts[gitIndex+1] == "modules" {
+		return true, false
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "locked")); err == nil {
+		return false, true
+	}
+	return false, false
 }
 
 func gitLastCommitEpochFast(dir string) (int64, error) {
 	layout, err := resolveGitLayout(dir)
 	if err == nil {
-		headHash, resolveErr := resolveHeadHash(layout)
-		if resolveErr == nil {
-			if epoch, readErr := readCommitEpoch(layout, headHash); readErr == nil && epoch > 0 {
-				return epoch, nil
+		head, headErr := readHead(layout)
+		if headErr == nil {
+			headHash, resolveErr := resolveHeadHashFromHead(layout, head)
+			if resolveErr == nil {
+				if epoch, readErr := readCommitEpoch(layout, headHash); readErr == nil && epoch > 0 {
+					return epoch, nil
+				}
 			}
 		}
 	}
@@ -762,30 +978,37 @@ func gitLastCommitEpochSlow(dir string) (int64, error) {
 }
 
 func resolveGitLayout(dir string) (gitLayout, error) {
-	gitPath := filepath.Join(dir, ".git")
-	info, err := os.Stat(gitPath)
+	gitDir, _, err := inspectDotGit(dir)
 	if err != nil {
 		return gitLayout{}, err
 	}
-	gitDir := gitPath
+	return finalizeGitLayout(filepath.Clean(gitDir))
+}
+
+func inspectDotGit(dir string) (string, bool, error) {
+	gitPath := filepath.Join(dir, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return "", false, err
+	}
 	if info.IsDir() {
-		return finalizeGitLayout(gitDir)
+		return gitPath, false, nil
 	}
 
 	content, err := os.ReadFile(gitPath)
 	if err != nil {
-		return gitLayout{}, err
+		return "", false, err
 	}
 	line := strings.TrimSpace(string(content))
 	const prefix = "gitdir: "
 	if !strings.HasPrefix(line, prefix) {
-		return gitLayout{}, errors.New("unsupported .git file format")
+		return "", false, errors.New("unsupported .git file format")
 	}
-	gitDir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(dir, gitDir)
 	}
-	return finalizeGitLayout(filepath.Clean(gitDir))
+	return filepath.Clean(gitDir), true, nil
 }
 
 func finalizeGitLayout(gitDir string) (gitLayout, error) {
@@ -811,8 +1034,12 @@ func finalizeGitLayout(gitDir string) (gitLayout, error) {
 	return layout, nil
 }
 
-func resolveHeadHash(layout gitLayout) (string, error) {
-	content, err := os.ReadFile(filepath.Join(layout.gitDir, "HEAD"))
+func readHead(layout gitLayout) (string, error) {
+	return readHeadFile(layout.gitDir)
+}
+
+func readHeadFile(gitDir string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
 		return "", err
 	}
@@ -820,6 +1047,18 @@ func resolveHeadHash(layout gitLayout) (string, error) {
 	if head == "" {
 		return "", errors.New("empty HEAD")
 	}
+	return head, nil
+}
+
+func resolveHeadHash(layout gitLayout) (string, error) {
+	head, err := readHead(layout)
+	if err != nil {
+		return "", err
+	}
+	return resolveHeadHashFromHead(layout, head)
+}
+
+func resolveHeadHashFromHead(layout gitLayout, head string) (string, error) {
 	if !strings.HasPrefix(head, "ref: ") {
 		return head, nil
 	}
@@ -836,6 +1075,41 @@ func resolveHeadHash(layout gitLayout) (string, error) {
 	}
 
 	return lookupPackedRef(layout, refName)
+}
+
+func formatHeadLabel(head string) string {
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return "-"
+	}
+	if strings.HasPrefix(head, "ref: ") {
+		return formatRefLabel(strings.TrimSpace(strings.TrimPrefix(head, "ref: ")))
+	}
+	if len(head) > 7 {
+		head = head[:7]
+	}
+	return "detached@" + head
+}
+
+func formatRefLabel(refName string) string {
+	refName = strings.TrimSpace(refName)
+	if refName == "" {
+		return "-"
+	}
+	switch {
+	case strings.HasPrefix(refName, "refs/heads/"):
+		return strings.TrimPrefix(refName, "refs/heads/")
+	case strings.HasPrefix(refName, "refs/remotes/"):
+		return strings.TrimPrefix(refName, "refs/remotes/")
+	case strings.HasPrefix(refName, "refs/"):
+		tail := strings.TrimPrefix(refName, "refs/")
+		if strings.Count(tail, "/") <= 1 {
+			return path.Base(tail)
+		}
+		return tail
+	default:
+		return path.Base(refName)
+	}
 }
 
 func lookupPackedRef(layout gitLayout, refName string) (string, error) {
@@ -976,8 +1250,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		"--footer-border=line",
 		"--info=hidden",
 		"--delimiter=\t",
-		"--with-nth=2..",
-		"--nth="+strconv.Itoa(cfg.searchFieldIndex),
+		"--with-nth=3..",
+		"--nth=2",
 		"--expect=ctrl-e",
 		"--query="+cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
@@ -999,14 +1273,16 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 
 	writeErr := writeCandidates(stdin, candidates)
 	waitErr := cmd.Wait()
+	if isPickerAbort(waitErr) {
+		if writeErr == nil || isClosedPickerPipe(writeErr) {
+			return "", nil
+		}
+		return "", writeErr
+	}
 	if writeErr != nil {
 		return "", writeErr
 	}
 	if waitErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", exitCodeError{code: 1}
-		}
 		return "", waitErr
 	}
 	return strings.TrimRight(stdout.String(), "\n"), nil
@@ -1037,8 +1313,17 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 	return buf.Flush()
 }
 
+func isPickerAbort(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 130)
+}
+
+func isClosedPickerPipe(err error) bool {
+	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, os.ErrClosed) || errors.Is(err, syscall.EPIPE)
+}
+
 func serializeCandidate(cand candidate) string {
-	return cand.path + "\t" + cand.display
+	return cand.path + "\t" + cand.matchText + "\t" + cand.display
 }
 
 func splitResult(result string) (string, string) {
@@ -1186,15 +1471,61 @@ func fitField(text string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(text) <= width {
-		return fmt.Sprintf("%-*s", width, text)
+	visibleWidth := displayWidth(text)
+	if visibleWidth <= width {
+		return text + strings.Repeat(" ", width-visibleWidth)
 	}
 	if width <= 3 {
-		runes := []rune(text)
-		return string(runes[:width])
+		return trimDisplayWidth(text, width)
 	}
-	runes := []rune(text)
-	return fmt.Sprintf("%-*s", width, string(runes[:width-3])+"...")
+	trimmed := trimDisplayWidth(text, width-3) + "..."
+	return trimmed + strings.Repeat(" ", width-displayWidth(trimmed))
+}
+
+func displayWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		width += runeDisplayWidth(r)
+	}
+	return width
+}
+
+func runeDisplayWidth(r rune) int {
+	switch {
+	case r == 0:
+		return 0
+	case r < 0x20 || (r >= 0x7f && r < 0xa0):
+		return 0
+	case r <= unicode.MaxASCII:
+		return 1
+	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
+		return 0
+	case unicode.In(r, unicode.Co):
+		return 2
+	default:
+		kind := width.LookupRune(r).Kind()
+		if kind == width.EastAsianWide || kind == width.EastAsianFullwidth {
+			return 2
+		}
+		return 1
+	}
+}
+
+func trimDisplayWidth(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	width := 0
+	var b strings.Builder
+	for _, r := range text {
+		rw := runeDisplayWidth(r)
+		if width+rw > maxWidth {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+	}
+	return b.String()
 }
 
 func paintField(color, text string) string {
@@ -1230,15 +1561,47 @@ func renderLangField(lang string) string {
 	return paintField(color, iconCell+fitField(label, langLabelWidth))
 }
 
-func renderGitField(state string) string {
-	switch state {
-	case "git":
-		return paintField(cGit, fitField("git", gitWidth))
-	case "git*":
-		return paintField(cGitDirty, fitField("git*", gitWidth))
-	default:
-		return paintField(cDim, fitField("-", gitWidth))
+func gitFieldText(meta gitMeta, branch string) string {
+	if !meta.present {
+		return "-"
 	}
+
+	icon := ""
+	switch {
+	case meta.isLocked:
+		icon = ""
+	case meta.isWorktree:
+		icon = "󰙅"
+	case meta.isSubmodule:
+		icon = ""
+	}
+
+	text := icon
+	if branch != "" && branch != "-" {
+		text += "  " + branch
+	}
+	return text
+}
+
+func renderGitField(meta gitMeta, branch string, width int) string {
+	if !meta.present {
+		return paintField(cDim, fitField("-", width))
+	}
+
+	color := cGit
+	switch {
+	case meta.isLocked:
+		color = cGitLock
+	case meta.isWorktree:
+		color = cWorktree
+	case meta.isSubmodule:
+		color = cSubmodule
+	}
+	if meta.dirty {
+		color = cGitDirty
+	}
+
+	return paintField(color, fitField(gitFieldText(meta, branch), width))
 }
 
 func expandHome(path string) string {
@@ -1282,6 +1645,40 @@ func getenvDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func resolveColumns() int {
+	if _, ok := os.LookupEnv("COLUMNS"); ok {
+		return parsePositiveEnvInt("COLUMNS", 120)
+	}
+
+	if cols, err := terminalColumns(int(os.Stdout.Fd())); err == nil && cols > 0 {
+		return cols
+	}
+
+	tty, err := os.Open("/dev/tty")
+	if err == nil {
+		defer tty.Close()
+		if cols, ttyErr := terminalColumns(int(tty.Fd())); ttyErr == nil && cols > 0 {
+			return cols
+		}
+	}
+
+	return 120
+}
+
+func terminalColumns(fd int) (int, error) {
+	if !term.IsTerminal(fd) {
+		return 0, errors.New("not a terminal")
+	}
+	cols, _, err := term.GetSize(fd)
+	if err != nil {
+		return 0, err
+	}
+	if cols <= 0 {
+		return 0, errors.New("invalid terminal width")
+	}
+	return cols, nil
 }
 
 func parsePositiveEnvInt(key string, fallback int) int {

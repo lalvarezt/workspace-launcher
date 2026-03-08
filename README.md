@@ -26,7 +26,7 @@ trees such as `~/.config` or `~/src`.
 ## Why Use It
 
 - Recent-first workspace switching without typing full paths.
-- Inline metadata for age, detected language, and git state.
+- Inline metadata for age, detected language, and git/worktree metadata.
 - `Ctrl-N` creates a new directory from the active query.
 - `Ctrl-E` opens the selected directory in `$VISUAL` or `$EDITOR`.
 - Supports native bash, zsh, and fish shell integration.
@@ -35,7 +35,7 @@ trees such as `~/.config` or `~/src`.
 
 - Go 1.26 or newer to build or install from source
 - `fzf` in `PATH`, unless you provide a vendored binary at `bin/fzf`
-- `git` if you want git-state display or git-based recency sorting
+- `git` if you want git/worktree metadata or git-based recency sorting
 
 ## Usage
 
@@ -105,6 +105,15 @@ Use it as a generic picker for config directories:
 workspace-launcher --no-language --no-git ~/.config
 ```
 
+For git roots, the picker shows a single git metadata column:
+
+- `` for regular repos
+- `` for submodules
+- `󰙅` for linked worktrees
+- `` for locked worktrees
+
+The icon is followed by the current branch or detached HEAD label when available. Non-git directories still show `-`. Filtering matches the workspace name plus the branch/ref text. Root labels remain informational only.
+
 ## Recency Modes
 
 Recency sorting is controlled with `WORKSPACE_LAUNCHER_RECENCY`.
@@ -141,7 +150,7 @@ Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[
 - `--bindings`: add the default `Ctrl-G` bindings; only valid with `--bash`, `--zsh`, or `--fish`
 - `--query TEXT`: start with an initial query
 - `--language` / `--no-language`: show or hide the language column
-- `--git` / `--no-git`: show or hide the git-state column
+- `--git` / `--no-git`: show or hide the git metadata column
 - `-h` / `--help`: show help text
 - `-v` / `--version`: show version
 - `ROOT...`: override the default root directories for this run
@@ -155,9 +164,9 @@ Configuration is done with environment variables:
 | `WORKSPACE_LAUNCHER_ROOT`            | Default root directories. Use the OS path list separator (`:` on Unix, `;` on Windows). Defaults to `~/git-repos`. |
 | `WORKSPACE_LAUNCHER_RECENCY`         | Recency mode: `mtime` (default) or `git`.                                  |
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
-| `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git-state column by default.                                     |
+| `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git metadata column by default.                                  |
 | `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
-| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Marks dirty repositories as `git*`.                                        |
+| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Highlights dirty git entries.                                              |
 | `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
 
 ## Install
