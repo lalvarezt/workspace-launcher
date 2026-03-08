@@ -370,6 +370,28 @@ func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
 	}
 }
 
+func TestPickRepoIgnoresBrokenPipeOnAbortExit(t *testing.T) {
+	fzfPath := writeTestScript(t, "#!/bin/sh\nexec 0<&-\nexit 130\n")
+
+	candidates := make([]candidate, 4096)
+	display := strings.Repeat("x", 256)
+	for i := range candidates {
+		candidates[i] = candidate{
+			path:      filepath.Join("/tmp", strconv.Itoa(i)),
+			display:   display,
+			matchText: display,
+		}
+	}
+
+	result, err := pickRepo(config{}, fzfPath, candidates)
+	if err != nil {
+		t.Fatalf("pickRepo returned error: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected empty result on abort, got %q", result)
+	}
+}
+
 func TestRunReturnsZeroWhenPickerClosesWithoutSelection(t *testing.T) {
 	root := t.TempDir()
 	makeDir(t, filepath.Join(root, "repo"), 1700001000, "")

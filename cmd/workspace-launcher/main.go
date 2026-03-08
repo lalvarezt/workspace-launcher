@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -1272,14 +1273,16 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 
 	writeErr := writeCandidates(stdin, candidates)
 	waitErr := cmd.Wait()
+	if isPickerAbort(waitErr) {
+		if writeErr == nil || isClosedPickerPipe(writeErr) {
+			return "", nil
+		}
+		return "", writeErr
+	}
 	if writeErr != nil {
 		return "", writeErr
 	}
 	if waitErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 130) {
-			return "", nil
-		}
 		return "", waitErr
 	}
 	return strings.TrimRight(stdout.String(), "\n"), nil
@@ -1308,6 +1311,15 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 		}
 	}
 	return buf.Flush()
+}
+
+func isPickerAbort(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 130)
+}
+
+func isClosedPickerPipe(err error) bool {
+	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, os.ErrClosed) || errors.Is(err, syscall.EPIPE)
 }
 
 func serializeCandidate(cand candidate) string {
