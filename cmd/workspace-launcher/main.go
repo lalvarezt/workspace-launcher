@@ -67,7 +67,7 @@ type config struct {
 	mode          string
 	shellBindings bool
 	initialQuery  string
-	root          string
+	roots         []string
 	jobs          int
 	gitDirty      bool
 	recency       string
@@ -179,11 +179,11 @@ func parseConfig(args []string) (config, error) {
 		maxJobs = 1
 	}
 
-	root := getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos")
+	roots := parseRootList(getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos"))
 	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", maxJobs), maxJobs)
 	cfg := config{
 		mode:          modePath,
-		root:          root,
+		roots:         roots,
 		jobs:          jobs,
 		gitDirty:      os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
 		recency:       recencyMtime,
@@ -234,21 +234,21 @@ func parseConfig(args []string) (config, error) {
 			return config{}, exitCodeError{code: 0}
 		case arg == "--":
 			if i+1 < len(args) {
-				if rootSet || i+2 < len(args) {
-					return config{}, errors.New("too many arguments")
+				if !rootSet {
+					cfg.roots = nil
+					rootSet = true
 				}
-				cfg.root = args[i+1]
-				rootSet = true
+				cfg.roots = append(cfg.roots, args[i+1:]...)
 			}
 			i = len(args)
 		case strings.HasPrefix(arg, "-"):
 			return config{}, fmt.Errorf("unknown option: %s", arg)
 		default:
-			if rootSet {
-				return config{}, errors.New("too many arguments")
+			if !rootSet {
+				cfg.roots = nil
+				rootSet = true
 			}
-			cfg.root = arg
-			rootSet = true
+			cfg.roots = append(cfg.roots, arg)
 		}
 	}
 
@@ -260,11 +260,11 @@ func parseConfig(args []string) (config, error) {
 		return config{}, errors.New("--bindings can only be used with --bash, --zsh, or --fish")
 	}
 
-	resolvedRoot, err := resolveRoot(cfg.root)
+	resolvedRoots, err := resolveRoots(cfg.roots)
 	if err != nil {
 		return config{}, err
 	}
-	cfg.root = resolvedRoot
+	cfg.roots = resolvedRoots
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -293,9 +293,9 @@ func parseConfig(args []string) (config, error) {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
 
-Launch an fzf-based directory picker for directories under ROOT.
+Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
 
 Options:
@@ -316,7 +316,7 @@ Shell integration:
   fish             workspace-launcher --fish [--bindings] | source
 
 Environment:
-  WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
+  WORKSPACE_LAUNCHER_ROOT           Default root directories, split with the OS path list separator (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
   WORKSPACE_LAUNCHER_GIT_DIRTY      Show dirty repos with git* when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
@@ -351,24 +351,52 @@ func resolveRoot(root string) (string, error) {
 	return resolvedRoot, nil
 }
 
-func buildCandidates(cfg config) ([]candidate, error) {
-	entries, err := os.ReadDir(cfg.root)
-	if err != nil {
-		return nil, err
+func resolveRoots(roots []string) ([]string, error) {
+	if len(roots) == 0 {
+		return nil, errors.New("at least one root is required")
 	}
 
-	children := make([]childDir, 0, len(entries))
-	for _, entry := range entries {
-		path := filepath.Join(cfg.root, entry.Name())
-		info, err := os.Stat(path)
-		if err != nil || !info.IsDir() {
-			continue
+	resolved := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		for _, part := range parseRootList(root) {
+			resolvedRoot, err := resolveRoot(part)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := seen[resolvedRoot]; ok {
+				continue
+			}
+			seen[resolvedRoot] = struct{}{}
+			resolved = append(resolved, resolvedRoot)
 		}
-		children = append(children, childDir{
-			name:     entry.Name(),
-			path:     path,
-			modEpoch: info.ModTime().Unix(),
-		})
+	}
+	if len(resolved) == 0 {
+		return nil, errors.New("at least one root is required")
+	}
+	return resolved, nil
+}
+
+func buildCandidates(cfg config) ([]candidate, error) {
+	children := make([]childDir, 0)
+	for _, root := range cfg.roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range entries {
+			path := filepath.Join(root, entry.Name())
+			info, err := os.Stat(path)
+			if err != nil || !info.IsDir() {
+				continue
+			}
+			children = append(children, childDir{
+				name:     entry.Name(),
+				path:     path,
+				modEpoch: info.ModTime().Unix(),
+			})
+		}
 	}
 	if len(children) == 0 {
 		return nil, nil
@@ -903,7 +931,7 @@ func resolveSelection(cfg config, key, selection string) (string, error) {
 		if err := validateNewName(selection); err != nil {
 			return "", err
 		}
-		target := filepath.Join(cfg.root, selection)
+		target := filepath.Join(cfg.roots[0], selection)
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			return "", err
 		}
@@ -1095,6 +1123,25 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+
+func parseRootList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := filepath.SplitList(value)
+	if len(parts) == 0 {
+		parts = []string{value}
+	}
+	roots := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		roots = append(roots, part)
+	}
+	return roots
 }
 
 func getenvDefault(key, fallback string) string {

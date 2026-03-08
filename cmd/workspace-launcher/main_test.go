@@ -136,7 +136,7 @@ func TestBuildCandidatesMatchesExpectedOrdering(t *testing.T) {
 	makeGitRepo(t, filepath.Join(root, "git-new"), 1700002000)
 
 	cfg := config{
-		root:         root,
+		roots:        []string{root},
 		jobs:         4,
 		recency:      recencyGit,
 		showLanguage: true,
@@ -166,6 +166,40 @@ func TestBuildCandidatesMatchesExpectedOrdering(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("unexpected ordering: got %v want %v", got, want)
+		}
+	}
+}
+
+func TestBuildCandidatesIncludesAllRoots(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	makeDir(t, filepath.Join(rootA, "alpha"), 1700001000, "")
+	makeDir(t, filepath.Join(rootB, "beta"), 1700002000, "")
+
+	cfg := config{
+		roots:        []string{rootA, rootB},
+		jobs:         2,
+		recency:      recencyMtime,
+		showLanguage: false,
+		showGit:      false,
+		now:          1700003000,
+		nameWidth:    32,
+	}
+
+	cands, err := buildCandidates(cfg)
+	if err != nil {
+		t.Fatalf("buildCandidates returned error: %v", err)
+	}
+	if len(cands) != 2 {
+		t.Fatalf("unexpected candidate count: got %d want %d", len(cands), 2)
+	}
+
+	got := []string{filepath.Base(cands[0].path), filepath.Base(cands[1].path)}
+	sort.Strings(got)
+	want := []string{"alpha", "beta"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected candidates: got %v want %v", got, want)
 		}
 	}
 }
@@ -308,6 +342,60 @@ func TestParseConfigAcceptsBindingsWithShellMode(t *testing.T) {
 	}
 	if !cfg.shellBindings {
 		t.Fatal("expected shellBindings to be enabled")
+	}
+}
+
+func TestParseConfigSplitsRootEnvList(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	t.Setenv("WORKSPACE_LAUNCHER_ROOT", rootA+string(os.PathListSeparator)+rootB)
+
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	if len(cfg.roots) != 2 {
+		t.Fatalf("unexpected root count: got %d want %d", len(cfg.roots), 2)
+	}
+	if cfg.roots[0] != rootA || cfg.roots[1] != rootB {
+		t.Fatalf("unexpected roots: got %v want [%q %q]", cfg.roots, rootA, rootB)
+	}
+}
+
+func TestParseConfigAcceptsMultipleRootArgs(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+
+	cfg, err := parseConfig([]string{rootA, rootB})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	if len(cfg.roots) != 2 {
+		t.Fatalf("unexpected root count: got %d want %d", len(cfg.roots), 2)
+	}
+	if cfg.roots[0] != rootA || cfg.roots[1] != rootB {
+		t.Fatalf("unexpected roots: got %v want [%q %q]", cfg.roots, rootA, rootB)
+	}
+}
+
+func TestResolveSelectionCreatesUnderFirstRoot(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	cfg := config{roots: []string{rootA, rootB}}
+
+	target, err := resolveSelection(cfg, "", "new-workspace")
+	if err != nil {
+		t.Fatalf("resolveSelection returned error: %v", err)
+	}
+
+	want := filepath.Join(rootA, "new-workspace")
+	if target != want {
+		t.Fatalf("unexpected target: got %q want %q", target, want)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected target directory to exist: %v", err)
 	}
 }
 
