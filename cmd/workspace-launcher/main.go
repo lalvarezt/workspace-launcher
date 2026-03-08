@@ -17,9 +17,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
+	"unicode"
 
 	shellscripts "github.com/lalvarezt/workspace-launcher/shell"
+	"golang.org/x/term"
 )
 
 const appName = "workspace-launcher"
@@ -40,11 +41,13 @@ const (
 	columnGap      = "   "
 	gapWidth       = 3
 	rootMinWidth   = 8
-	rootMaxWidth   = 24
+	rootMaxWidth   = 40
 	rootFloorWidth = 4
 	langWidth      = 12
-	langLabelWidth = langWidth - 3
-	gitWidth       = 30
+	langLabelWidth = langWidth - 4
+	gitMinWidth    = 3
+	gitMaxWidth    = 48
+	nameMinWidth   = 16
 	ageWidth       = 12
 	chromeWidth    = 18
 )
@@ -85,6 +88,8 @@ type config struct {
 	headlessBench  bool
 	now            int64
 	cwd            string
+	cols           int
+	gitColumnWidth int
 	rootLabelWidth int
 	nameWidth      int
 }
@@ -100,6 +105,14 @@ type childDir struct {
 type candidate struct {
 	path      string
 	display   string
+	matchText string
+	epoch     int64
+}
+
+type repoDetails struct {
+	child     childDir
+	lang      string
+	git       gitMeta
 	matchText string
 	epoch     int64
 }
@@ -311,28 +324,8 @@ func parseConfig(args []string) (config, error) {
 		cfg.cwd = cwd
 	}
 
-	cols := parsePositiveEnvInt("COLUMNS", 120)
-	metaWidth := ageWidth
-	if cfg.showLanguage {
-		metaWidth += langWidth + gapWidth
-	}
-	if cfg.showGit {
-		metaWidth += gitWidth + gapWidth
-	}
-	cfg.nameWidth = cols - chromeWidth - metaWidth
-	if cfg.showRoot {
-		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
-		if cfg.nameWidth < 16 {
-			cfg.rootLabelWidth -= 16 - cfg.nameWidth
-			if cfg.rootLabelWidth < rootFloorWidth {
-				cfg.rootLabelWidth = rootFloorWidth
-			}
-			cfg.nameWidth = cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
-		}
-	}
-	if cfg.nameWidth < 16 {
-		cfg.nameWidth = 16
-	}
+	cfg.cols = resolveColumns()
+	applyLayoutWidths(&cfg)
 
 	return cfg, nil
 }
@@ -447,23 +440,23 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		return nil, nil
 	}
 
-	results := make([]candidate, len(children))
+	details := make([]repoDetails, len(children))
 	needsInspect := cfg.showLanguage || cfg.showGit || cfg.recency == recencyGit
 	if !needsInspect || cfg.jobs <= 1 || len(children) == 1 {
 		for i, child := range children {
-			cand, err := describeRepo(cfg, child, needsInspect)
+			detail, err := inspectRepo(cfg, child, needsInspect)
 			if err != nil {
 				return nil, err
 			}
-			results[i] = cand
+			details[i] = detail
 		}
-		return results, nil
+		return renderCandidates(cfg, details), nil
 	}
 
 	type jobResult struct {
-		index int
-		cand  candidate
-		err   error
+		index  int
+		detail repoDetails
+		err    error
 	}
 
 	jobs := make(chan int, len(children))
@@ -479,8 +472,8 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				cand, err := describeRepo(cfg, children[idx], needsInspect)
-				out <- jobResult{index: idx, cand: cand, err: err}
+				detail, err := inspectRepo(cfg, children[idx], needsInspect)
+				out <- jobResult{index: idx, detail: detail, err: err}
 			}
 		}()
 	}
@@ -501,15 +494,15 @@ func buildCandidates(cfg config) ([]candidate, error) {
 			firstErr = res.err
 			continue
 		}
-		results[res.index] = res.cand
+		details[res.index] = res.detail
 	}
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	return results, nil
+	return renderCandidates(cfg, details), nil
 }
 
-func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
+func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) {
 	facts := dirFacts{}
 	if inspect {
 		needGit := cfg.showGit || cfg.recency == recencyGit
@@ -517,7 +510,7 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 		var err error
 		facts, err = collectDirFacts(child.path, needGit, needLanguage)
 		if err != nil {
-			return candidate{}, err
+			return repoDetails{}, err
 		}
 	}
 
@@ -535,42 +528,87 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 		lang = detectLanguage(facts)
 	}
 
-	branch := git.branchLabel
-	if branch == "" {
-		branch = "-"
-	}
-
-	markerField := paintField(cDim, " ")
-	if isCurrentRepo(cfg.cwd, child.path) {
-		markerField = paintField(cCurrent, "*")
-	}
-	nameField := markerField + " " + paintField(cName, fitField(child.name, cfg.nameWidth))
-	ageField := paintField(cTime, fitField(formatAge(cfg.now, epoch), ageWidth))
-
-	fields := make([]string, 0, 4)
-	if cfg.showRoot {
-		fields = append(fields, paintField(cDim, fitField(child.rootLabel, cfg.rootLabelWidth)))
-	}
-	fields = append(fields, nameField)
-	if cfg.showLanguage {
-		fields = append(fields, renderLangField(lang))
-	}
-	if cfg.showGit {
-		fields = append(fields, renderGitField(git, branch))
-	}
-	fields = append(fields, ageField)
-
 	matchText := child.name
 	if git.branchLabel != "" && git.branchLabel != "-" {
 		matchText += " " + git.branchLabel
 	}
 
-	return candidate{
-		path:      child.path,
-		display:   strings.Join(fields, "\t"),
+	return repoDetails{
+		child:     child,
+		lang:      lang,
+		git:       git,
 		matchText: matchText,
 		epoch:     epoch,
 	}, nil
+}
+
+func renderCandidates(cfg config, details []repoDetails) []candidate {
+	if cfg.showGit {
+		cfg.gitColumnWidth = computeGitColumnWidth(details)
+	} else {
+		cfg.gitColumnWidth = 0
+	}
+	applyLayoutWidths(&cfg)
+
+	out := make([]candidate, len(details))
+	for i, detail := range details {
+		branch := detail.git.branchLabel
+		if branch == "" {
+			branch = "-"
+		}
+
+		markerField := paintField(cDim, " ")
+		if isCurrentRepo(cfg.cwd, detail.child.path) {
+			markerField = paintField(cCurrent, "*")
+		}
+		nameField := markerField + " " + paintField(cName, fitField(detail.child.name, cfg.nameWidth))
+		ageField := paintField(cTime, fitField(formatAge(cfg.now, detail.epoch), ageWidth))
+
+		fields := make([]string, 0, 4)
+		if cfg.showRoot {
+			fields = append(fields, paintField(cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
+		}
+		fields = append(fields, nameField)
+		if cfg.showLanguage {
+			fields = append(fields, renderLangField(detail.lang))
+		}
+		if cfg.showGit {
+			fields = append(fields, renderGitField(detail.git, branch, cfg.gitColumnWidth))
+		}
+		fields = append(fields, ageField)
+
+		out[i] = candidate{
+			path:      detail.child.path,
+			display:   strings.Join(fields, "\t"),
+			matchText: detail.matchText,
+			epoch:     detail.epoch,
+		}
+	}
+	return out
+}
+
+func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
+	detail, err := inspectRepo(cfg, child, inspect)
+	if err != nil {
+		return candidate{}, err
+	}
+	if cfg.cols == 0 {
+		metaWidth := ageWidth
+		if cfg.showLanguage {
+			metaWidth += langWidth + gapWidth
+		}
+		if cfg.showGit {
+			if cfg.gitColumnWidth == 0 {
+				cfg.gitColumnWidth = computeGitColumnWidth([]repoDetails{detail})
+			}
+			metaWidth += cfg.gitColumnWidth + gapWidth
+		}
+		cfg.cols = cfg.nameWidth + chromeWidth + metaWidth
+		if cfg.showRoot {
+			cfg.cols += cfg.rootLabelWidth + gapWidth
+		}
+	}
+	return renderCandidates(cfg, []repoDetails{detail})[0], nil
 }
 
 func collectDirFacts(dir string, needGit, needLanguage bool) (dirFacts, error) {
@@ -724,13 +762,51 @@ func rootLabelAtDepth(info rootLabelParts, depth int) string {
 func computeRootLabelWidth(labels map[string]string) int {
 	longest := rootMinWidth
 	for _, label := range labels {
-		width := utf8.RuneCountInString(label)
+		width := displayWidth(label)
 		if width > longest {
 			longest = width
 		}
 	}
 	if longest > rootMaxWidth {
 		return rootMaxWidth
+	}
+	return longest
+}
+
+func applyLayoutWidths(cfg *config) {
+	metaWidth := ageWidth
+	if cfg.showLanguage {
+		metaWidth += langWidth + gapWidth
+	}
+	if cfg.showGit {
+		metaWidth += cfg.gitColumnWidth + gapWidth
+	}
+	cfg.nameWidth = cfg.cols - chromeWidth - metaWidth
+	if cfg.showRoot {
+		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
+		if cfg.nameWidth < 16 {
+			cfg.rootLabelWidth -= 16 - cfg.nameWidth
+			if cfg.rootLabelWidth < rootFloorWidth {
+				cfg.rootLabelWidth = rootFloorWidth
+			}
+			cfg.nameWidth = cfg.cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
+		}
+	}
+	if cfg.nameWidth < 16 {
+		cfg.nameWidth = 16
+	}
+}
+
+func computeGitColumnWidth(details []repoDetails) int {
+	longest := gitMinWidth
+	for _, detail := range details {
+		width := displayWidth(gitFieldText(detail.git, detail.git.branchLabel))
+		if width > longest {
+			longest = width
+		}
+	}
+	if longest > gitMaxWidth {
+		return gitMaxWidth
 	}
 	return longest
 }
@@ -1374,15 +1450,55 @@ func fitField(text string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(text) <= width {
-		return fmt.Sprintf("%-*s", width, text)
+	visibleWidth := displayWidth(text)
+	if visibleWidth <= width {
+		return text + strings.Repeat(" ", width-visibleWidth)
 	}
 	if width <= 3 {
-		runes := []rune(text)
-		return string(runes[:width])
+		return trimDisplayWidth(text, width)
 	}
-	runes := []rune(text)
-	return fmt.Sprintf("%-*s", width, string(runes[:width-3])+"...")
+	trimmed := trimDisplayWidth(text, width-3) + "..."
+	return trimmed + strings.Repeat(" ", width-displayWidth(trimmed))
+}
+
+func displayWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		width += runeDisplayWidth(r)
+	}
+	return width
+}
+
+func runeDisplayWidth(r rune) int {
+	switch {
+	case r == 0:
+		return 0
+	case r < 0x20 || (r >= 0x7f && r < 0xa0):
+		return 0
+	case r <= unicode.MaxASCII:
+		return 1
+	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
+		return 0
+	default:
+		return 2
+	}
+}
+
+func trimDisplayWidth(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	width := 0
+	var b strings.Builder
+	for _, r := range text {
+		rw := runeDisplayWidth(r)
+		if width+rw > maxWidth {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+	}
+	return b.String()
 }
 
 func paintField(color, text string) string {
@@ -1418,33 +1534,47 @@ func renderLangField(lang string) string {
 	return paintField(color, iconCell+fitField(label, langLabelWidth))
 }
 
-func renderGitField(meta gitMeta, branch string) string {
+func gitFieldText(meta gitMeta, branch string) string {
 	if !meta.present {
-		return paintField(cDim, fitField("-", gitWidth))
+		return "-"
 	}
 
 	icon := ""
-	color := cGit
 	switch {
 	case meta.isLocked:
 		icon = ""
-		color = cGitLock
 	case meta.isWorktree:
 		icon = "󰙅"
-		color = cWorktree
 	case meta.isSubmodule:
 		icon = ""
-		color = cSubmodule
-	}
-	if meta.dirty {
-		color = cGitDirty
 	}
 
 	text := icon
 	if branch != "" && branch != "-" {
 		text += " " + branch
 	}
-	return paintField(color, fitField(text, gitWidth))
+	return text
+}
+
+func renderGitField(meta gitMeta, branch string, width int) string {
+	if !meta.present {
+		return paintField(cDim, fitField("-", width))
+	}
+
+	color := cGit
+	switch {
+	case meta.isLocked:
+		color = cGitLock
+	case meta.isWorktree:
+		color = cWorktree
+	case meta.isSubmodule:
+		color = cSubmodule
+	}
+	if meta.dirty {
+		color = cGitDirty
+	}
+
+	return paintField(color, fitField(gitFieldText(meta, branch), width))
 }
 
 func expandHome(path string) string {
@@ -1488,6 +1618,40 @@ func getenvDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func resolveColumns() int {
+	if _, ok := os.LookupEnv("COLUMNS"); ok {
+		return parsePositiveEnvInt("COLUMNS", 120)
+	}
+
+	if cols, err := terminalColumns(int(os.Stdout.Fd())); err == nil && cols > 0 {
+		return cols
+	}
+
+	tty, err := os.Open("/dev/tty")
+	if err == nil {
+		defer tty.Close()
+		if cols, ttyErr := terminalColumns(int(tty.Fd())); ttyErr == nil && cols > 0 {
+			return cols
+		}
+	}
+
+	return 120
+}
+
+func terminalColumns(fd int) (int, error) {
+	if !term.IsTerminal(fd) {
+		return 0, errors.New("not a terminal")
+	}
+	cols, _, err := term.GetSize(fd)
+	if err != nil {
+		return 0, err
+	}
+	if cols <= 0 {
+		return 0, errors.New("invalid terminal width")
+	}
+	return cols, nil
 }
 
 func parsePositiveEnvInt(key string, fallback int) int {

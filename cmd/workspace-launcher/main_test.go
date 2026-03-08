@@ -632,35 +632,35 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 }
 
 func TestRenderGitFieldUsesGitIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true}, "main")
+	field := renderGitField(gitMeta{present: true}, "main", 12)
 	if !strings.Contains(field, "") || !strings.Contains(field, "main") {
 		t.Fatalf("unexpected git field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesWorktreeIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui")
+	field := renderGitField(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui", 24)
 	if !strings.Contains(field, "󰙅") || !strings.Contains(field, "feature/worktree-ui") {
 		t.Fatalf("unexpected worktree field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesLockIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true, isLocked: true}, "main")
+	field := renderGitField(gitMeta{present: true, isLocked: true}, "main", 12)
 	if !strings.Contains(field, "") {
 		t.Fatalf("unexpected locked field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesSubmoduleIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true, isSubmodule: true}, "main")
+	field := renderGitField(gitMeta{present: true, isSubmodule: true}, "main", 12)
 	if !strings.Contains(field, "") {
 		t.Fatalf("unexpected submodule field: %q", field)
 	}
 }
 
 func TestRenderGitFieldMarksNonGitEntries(t *testing.T) {
-	field := renderGitField(gitMeta{}, "-")
+	field := renderGitField(gitMeta{}, "-", 3)
 	if !strings.Contains(field, "-") {
 		t.Fatalf("unexpected non-git field: %q", field)
 	}
@@ -696,9 +696,28 @@ func TestDescribeRepoIncludesBranchTextInGitField(t *testing.T) {
 }
 
 func TestRenderGitFieldTruncatesLongNames(t *testing.T) {
-	field := renderGitField(gitMeta{present: true}, "feature/this-is-a-very-long-branch-name")
+	field := renderGitField(gitMeta{present: true}, "feature/this-is-a-very-long-branch-name", 12)
 	if !strings.Contains(field, "...") {
 		t.Fatalf("expected truncated git field, got %q", field)
+	}
+}
+
+func TestComputeGitColumnWidthUsesObservedContent(t *testing.T) {
+	width := computeGitColumnWidth([]repoDetails{
+		{git: gitMeta{present: true}, matchText: "a"},
+		{git: gitMeta{present: true, isWorktree: true, branchLabel: "feature/demo"}},
+	})
+	if width != displayWidth("󰙅 feature/demo") {
+		t.Fatalf("unexpected git width: got %d want %d", width, displayWidth("󰙅 feature/demo"))
+	}
+}
+
+func TestComputeGitColumnWidthClampsAtMax(t *testing.T) {
+	width := computeGitColumnWidth([]repoDetails{
+		{git: gitMeta{present: true, branchLabel: "feature/this-is-a-very-long-branch-name-that-should-be-clamped"}},
+	})
+	if width != gitMaxWidth {
+		t.Fatalf("unexpected clamped width: got %d want %d", width, gitMaxWidth)
 	}
 }
 
