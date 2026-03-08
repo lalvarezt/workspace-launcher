@@ -6,7 +6,7 @@
 [![Language](https://img.shields.io/badge/language-go-00ADD8.svg)](go.mod)
 
 `workspace-launcher` is a native Go `fzf`-powered workspace picker for the terminal. It
-scans the direct children of a root directory, sorts them by recent activity,
+scans the direct children of one or more root directories, sorts them by recent activity,
 shows lightweight metadata, and lets you either select an existing workspace or
 create a new one from the current query.
 
@@ -39,7 +39,7 @@ trees such as `~/.config` or `~/src`.
 
 ## Usage
 
-`workspace-launcher` scans the direct children of a root directory, sorts them
+`workspace-launcher` scans the direct children of one or more root directories, sorts them
 by recency, and opens `fzf`. By default it prints the selected path, which
 makes it easy to plug into shell workflows.
 
@@ -83,6 +83,16 @@ Search under a different root:
 workspace-launcher ~/src
 ```
 
+Search across several roots:
+
+```sh
+workspace-launcher ~/src ~/.config
+```
+
+When multiple roots are configured, the picker shows a left-side root context
+column to disambiguate duplicate workspace names. Filtering still matches the
+workspace-name column only.
+
 Seed the query:
 
 ```sh
@@ -122,7 +132,7 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 ## CLI Options
 
 ```text
-Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
 ```
 
 - `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)`
@@ -134,7 +144,7 @@ Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[
 - `--git` / `--no-git`: show or hide the git-state column
 - `-h` / `--help`: show help text
 - `-v` / `--version`: show version
-- `ROOT`: override the default root directory for this run
+- `ROOT...`: override the default root directories for this run
 
 ## Configuration
 
@@ -142,7 +152,7 @@ Configuration is done with environment variables:
 
 | Variable                             | Description                                                                |
 |--------------------------------------|----------------------------------------------------------------------------|
-| `WORKSPACE_LAUNCHER_ROOT`            | Default root directory. Defaults to `~/git-repos`.                         |
+| `WORKSPACE_LAUNCHER_ROOT`            | Default root directories. Use the OS path list separator (`:` on Unix, `;` on Windows). Defaults to `~/git-repos`. |
 | `WORKSPACE_LAUNCHER_RECENCY`         | Recency mode: `mtime` (default) or `git`.                                  |
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
 | `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git-state column by default.                                     |
@@ -222,7 +232,10 @@ go run ./cmd/bench-setup
 
 ## Notes
 
-- The launcher only scans the direct children of the selected root.
+- The launcher only scans the direct children of the selected roots.
+- When multiple roots are configured, the picker shows the shortest unique root label on the left.
+- Multi-root filtering only matches workspace names, not the root-context column.
+- When multiple roots are configured, `Ctrl-N` creates a new directory under the first root.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
 

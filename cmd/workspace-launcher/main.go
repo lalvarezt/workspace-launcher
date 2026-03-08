@@ -38,6 +38,9 @@ const (
 const (
 	columnGap      = "   "
 	gapWidth       = 3
+	rootMinWidth   = 8
+	rootMaxWidth   = 24
+	rootFloorWidth = 4
 	langWidth      = 12
 	langLabelWidth = langWidth - 3
 	gitWidth       = 5
@@ -64,31 +67,38 @@ const (
 )
 
 type config struct {
-	mode          string
-	shellBindings bool
-	initialQuery  string
-	root          string
-	jobs          int
-	gitDirty      bool
-	recency       string
-	showLanguage  bool
-	showGit       bool
-	headlessBench bool
-	now           int64
-	cwd           string
-	nameWidth     int
+	mode             string
+	shellBindings    bool
+	initialQuery     string
+	roots            []string
+	rootLabels       map[string]string
+	jobs             int
+	gitDirty         bool
+	recency          string
+	showLanguage     bool
+	showGit          bool
+	showRoot         bool
+	headlessBench    bool
+	now              int64
+	cwd              string
+	rootLabelWidth   int
+	nameWidth        int
+	searchFieldIndex int
 }
 
 type childDir struct {
-	name     string
-	path     string
-	modEpoch int64
+	name      string
+	path      string
+	root      string
+	rootLabel string
+	modEpoch  int64
 }
 
 type candidate struct {
-	path    string
-	display string
-	epoch   int64
+	path      string
+	display   string
+	matchText string
+	epoch     int64
 }
 
 type dirFacts struct {
@@ -109,6 +119,11 @@ type dirFacts struct {
 type gitLayout struct {
 	gitDir    string
 	commonDir string
+}
+
+type rootLabelParts struct {
+	clean string
+	parts []string
 }
 
 func main() {
@@ -179,11 +194,11 @@ func parseConfig(args []string) (config, error) {
 		maxJobs = 1
 	}
 
-	root := getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos")
+	roots := parseRootList(getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos"))
 	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", maxJobs), maxJobs)
 	cfg := config{
 		mode:          modePath,
-		root:          root,
+		roots:         roots,
 		jobs:          jobs,
 		gitDirty:      os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
 		recency:       recencyMtime,
@@ -234,21 +249,21 @@ func parseConfig(args []string) (config, error) {
 			return config{}, exitCodeError{code: 0}
 		case arg == "--":
 			if i+1 < len(args) {
-				if rootSet || i+2 < len(args) {
-					return config{}, errors.New("too many arguments")
+				if !rootSet {
+					cfg.roots = nil
+					rootSet = true
 				}
-				cfg.root = args[i+1]
-				rootSet = true
+				cfg.roots = append(cfg.roots, args[i+1:]...)
 			}
 			i = len(args)
 		case strings.HasPrefix(arg, "-"):
 			return config{}, fmt.Errorf("unknown option: %s", arg)
 		default:
-			if rootSet {
-				return config{}, errors.New("too many arguments")
+			if !rootSet {
+				cfg.roots = nil
+				rootSet = true
 			}
-			cfg.root = arg
-			rootSet = true
+			cfg.roots = append(cfg.roots, arg)
 		}
 	}
 
@@ -260,11 +275,18 @@ func parseConfig(args []string) (config, error) {
 		return config{}, errors.New("--bindings can only be used with --bash, --zsh, or --fish")
 	}
 
-	resolvedRoot, err := resolveRoot(cfg.root)
+	resolvedRoots, err := resolveRoots(cfg.roots)
 	if err != nil {
 		return config{}, err
 	}
-	cfg.root = resolvedRoot
+	cfg.roots = resolvedRoots
+	cfg.showRoot = len(cfg.roots) > 1
+	cfg.searchFieldIndex = 1
+	if cfg.showRoot {
+		cfg.rootLabels = buildRootLabels(cfg.roots)
+		cfg.rootLabelWidth = computeRootLabelWidth(cfg.rootLabels)
+		cfg.searchFieldIndex = 2
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -285,6 +307,16 @@ func parseConfig(args []string) (config, error) {
 		metaWidth += gitWidth + gapWidth
 	}
 	cfg.nameWidth = cols - chromeWidth - metaWidth
+	if cfg.showRoot {
+		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
+		if cfg.nameWidth < 16 {
+			cfg.rootLabelWidth -= 16 - cfg.nameWidth
+			if cfg.rootLabelWidth < rootFloorWidth {
+				cfg.rootLabelWidth = rootFloorWidth
+			}
+			cfg.nameWidth = cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
+		}
+	}
 	if cfg.nameWidth < 16 {
 		cfg.nameWidth = 16
 	}
@@ -293,9 +325,9 @@ func parseConfig(args []string) (config, error) {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
 
-Launch an fzf-based directory picker for directories under ROOT.
+Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
 
 Options:
@@ -316,7 +348,7 @@ Shell integration:
   fish             workspace-launcher --fish [--bindings] | source
 
 Environment:
-  WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
+  WORKSPACE_LAUNCHER_ROOT           Default root directories, split with the OS path list separator (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
   WORKSPACE_LAUNCHER_GIT_DIRTY      Show dirty repos with git* when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
@@ -351,24 +383,52 @@ func resolveRoot(root string) (string, error) {
 	return resolvedRoot, nil
 }
 
-func buildCandidates(cfg config) ([]candidate, error) {
-	entries, err := os.ReadDir(cfg.root)
-	if err != nil {
-		return nil, err
+func resolveRoots(roots []string) ([]string, error) {
+	if len(roots) == 0 {
+		return nil, errors.New("at least one root is required")
 	}
 
-	children := make([]childDir, 0, len(entries))
-	for _, entry := range entries {
-		path := filepath.Join(cfg.root, entry.Name())
-		info, err := os.Stat(path)
-		if err != nil || !info.IsDir() {
+	resolved := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		resolvedRoot, err := resolveRoot(root)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[resolvedRoot]; ok {
 			continue
 		}
-		children = append(children, childDir{
-			name:     entry.Name(),
-			path:     path,
-			modEpoch: info.ModTime().Unix(),
-		})
+		seen[resolvedRoot] = struct{}{}
+		resolved = append(resolved, resolvedRoot)
+	}
+	if len(resolved) == 0 {
+		return nil, errors.New("at least one root is required")
+	}
+	return resolved, nil
+}
+
+func buildCandidates(cfg config) ([]candidate, error) {
+	children := make([]childDir, 0)
+	for _, root := range cfg.roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range entries {
+			path := filepath.Join(root, entry.Name())
+			info, err := os.Stat(path)
+			if err != nil || !info.IsDir() {
+				continue
+			}
+			children = append(children, childDir{
+				name:      entry.Name(),
+				path:      path,
+				root:      root,
+				rootLabel: cfg.rootLabels[root],
+				modEpoch:  info.ModTime().Unix(),
+			})
+		}
 	}
 	if len(children) == 0 {
 		return nil, nil
@@ -505,30 +565,132 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 	if isCurrentRepo(cfg.cwd, child.path) {
 		markerField = paintField(cCurrent, "*")
 	}
-	nameField := paintField(cName, fitField(child.name, cfg.nameWidth))
+	nameField := markerField + " " + paintField(cName, fitField(child.name, cfg.nameWidth))
 	ageField := paintField(cTime, fitField(formatAge(cfg.now, epoch), ageWidth))
 
-	var display strings.Builder
-	display.Grow(len(child.name) + 96)
-	display.WriteString(markerField)
-	display.WriteString(" ")
-	display.WriteString(nameField)
+	fields := make([]string, 0, 4)
+	if cfg.showRoot {
+		fields = append(fields, paintField(cDim, fitField(child.rootLabel, cfg.rootLabelWidth)))
+	}
+	fields = append(fields, nameField)
 	if cfg.showLanguage {
-		display.WriteString(columnGap)
-		display.WriteString(renderLangField(lang))
+		fields = append(fields, renderLangField(lang))
 	}
 	if cfg.showGit {
-		display.WriteString(columnGap)
-		display.WriteString(renderGitField(gitState))
+		fields = append(fields, renderGitField(gitState))
 	}
-	display.WriteString(columnGap)
-	display.WriteString(ageField)
+	fields = append(fields, ageField)
 
 	return candidate{
-		path:    child.path,
-		display: display.String(),
-		epoch:   epoch,
+		path:      child.path,
+		display:   strings.Join(fields, "\t"),
+		matchText: child.name,
+		epoch:     epoch,
 	}, nil
+}
+
+func buildRootLabels(roots []string) map[string]string {
+	labels := make(map[string]string, len(roots))
+	if len(roots) == 0 {
+		return labels
+	}
+
+	partsByRoot := make(map[string]rootLabelParts, len(roots))
+	depths := make(map[string]int, len(roots))
+	for _, root := range roots {
+		clean := filepath.Clean(root)
+		partsByRoot[root] = rootLabelParts{
+			clean: clean,
+			parts: splitPathParts(clean),
+		}
+		depths[root] = 1
+	}
+
+	for {
+		groups := make(map[string][]string, len(roots))
+		for _, root := range roots {
+			label := rootLabelAtDepth(partsByRoot[root], depths[root])
+			groups[label] = append(groups[label], root)
+		}
+
+		collisions := false
+		progressed := false
+		for label, group := range groups {
+			if len(group) == 1 {
+				labels[group[0]] = label
+				continue
+			}
+			collisions = true
+			for _, root := range group {
+				info := partsByRoot[root]
+				if depths[root] < len(info.parts) {
+					depths[root]++
+					progressed = true
+					continue
+				}
+				labels[root] = info.clean
+			}
+		}
+
+		if !collisions {
+			return labels
+		}
+		if !progressed {
+			for _, root := range roots {
+				if _, ok := labels[root]; !ok {
+					labels[root] = partsByRoot[root].clean
+				}
+			}
+			return labels
+		}
+	}
+}
+
+func splitPathParts(path string) []string {
+	clean := filepath.Clean(path)
+	volume := filepath.VolumeName(clean)
+	remainder := strings.TrimPrefix(clean, volume)
+	remainder = strings.TrimPrefix(remainder, string(filepath.Separator))
+	if remainder == "" {
+		return nil
+	}
+	parts := strings.Split(remainder, string(filepath.Separator))
+	out := parts[:0]
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func rootLabelAtDepth(info rootLabelParts, depth int) string {
+	if len(info.parts) == 0 {
+		return info.clean
+	}
+	if depth > len(info.parts) {
+		depth = len(info.parts)
+	}
+	start := len(info.parts) - depth
+	if start < 0 {
+		start = 0
+	}
+	return filepath.Join(info.parts[start:]...)
+}
+
+func computeRootLabelWidth(labels map[string]string) int {
+	longest := rootMinWidth
+	for _, label := range labels {
+		width := utf8.RuneCountInString(label)
+		if width > longest {
+			longest = width
+		}
+	}
+	if longest > rootMaxWidth {
+		return rootMaxWidth
+	}
+	return longest
 }
 
 func detectLanguage(facts dirFacts) string {
@@ -815,6 +977,7 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		"--info=hidden",
 		"--delimiter=\t",
 		"--with-nth=2..",
+		"--nth="+strconv.Itoa(cfg.searchFieldIndex),
 		"--expect=ctrl-e",
 		"--query="+cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
@@ -852,8 +1015,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 func pickRepoHeadless(cfg config, candidates []candidate) (string, error) {
 	query := strings.ToLower(cfg.initialQuery)
 	for _, cand := range candidates {
-		line := cand.path + "\t" + cand.display
-		if query == "" || strings.Contains(strings.ToLower(line), query) {
+		line := serializeCandidate(cand)
+		if query == "" || strings.Contains(strings.ToLower(cand.matchText), query) {
 			return line, nil
 		}
 	}
@@ -864,13 +1027,7 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 	defer w.Close()
 	buf := bufio.NewWriterSize(w, 1<<20)
 	for _, cand := range candidates {
-		if _, err := buf.WriteString(cand.path); err != nil {
-			return err
-		}
-		if _, err := buf.WriteString("\t"); err != nil {
-			return err
-		}
-		if _, err := buf.WriteString(cand.display); err != nil {
+		if _, err := buf.WriteString(serializeCandidate(cand)); err != nil {
 			return err
 		}
 		if err := buf.WriteByte('\n'); err != nil {
@@ -878,6 +1035,10 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 		}
 	}
 	return buf.Flush()
+}
+
+func serializeCandidate(cand candidate) string {
+	return cand.path + "\t" + cand.display
 }
 
 func splitResult(result string) (string, string) {
@@ -903,7 +1064,7 @@ func resolveSelection(cfg config, key, selection string) (string, error) {
 		if err := validateNewName(selection); err != nil {
 			return "", err
 		}
-		target := filepath.Join(cfg.root, selection)
+		target := filepath.Join(cfg.roots[0], selection)
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			return "", err
 		}
@@ -1095,6 +1256,25 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+
+func parseRootList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := filepath.SplitList(value)
+	if len(parts) == 0 {
+		parts = []string{value}
+	}
+	roots := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		roots = append(roots, part)
+	}
+	return roots
 }
 
 func getenvDefault(key, fallback string) string {
