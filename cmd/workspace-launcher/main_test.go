@@ -94,6 +94,76 @@ func TestGitLastCommitEpochFastWorktree(t *testing.T) {
 	}
 }
 
+func TestInspectGitMetaRegularRepoBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	meta := inspectGitMeta(repo, true, true, true, false)
+
+	if !meta.present {
+		t.Fatal("expected repo to be marked present")
+	}
+	if meta.isWorktree {
+		t.Fatal("expected regular repo, got worktree")
+	}
+	if meta.branchLabel != currentBranchName(t, repo) {
+		t.Fatalf("unexpected branch label: got %q want %q", meta.branchLabel, currentBranchName(t, repo))
+	}
+	if meta.epoch != 1700000300 {
+		t.Fatalf("unexpected epoch: got %d want %d", meta.epoch, 1700000300)
+	}
+}
+
+func TestInspectGitMetaDetachedHead(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "checkout", "--detach", head)
+
+	meta := inspectGitMeta(repo, true, true, false, false)
+
+	if meta.branchLabel != "detached@"+head[:7] {
+		t.Fatalf("unexpected detached label: got %q want %q", meta.branchLabel, "detached@"+head[:7])
+	}
+}
+
+func TestInspectGitMetaUnbornBranch(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "--initial-branch=feature/unborn")
+	runGit(t, repo, "config", "user.name", "test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+
+	meta := inspectGitMeta(repo, true, true, true, false)
+
+	if meta.branchLabel != "feature/unborn" {
+		t.Fatalf("unexpected unborn branch label: got %q want %q", meta.branchLabel, "feature/unborn")
+	}
+	if meta.epoch != 0 {
+		t.Fatalf("unexpected epoch for unborn repo: got %d want 0", meta.epoch)
+	}
+}
+
+func TestInspectGitMetaWorktreeBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", "-b", "feature/worktree-ui", worktree)
+
+	meta := inspectGitMeta(worktree, false, true, true, false)
+
+	if !meta.isWorktree {
+		t.Fatal("expected linked worktree")
+	}
+	if meta.branchLabel != "feature/worktree-ui" {
+		t.Fatalf("unexpected worktree branch label: got %q want %q", meta.branchLabel, "feature/worktree-ui")
+	}
+	if meta.epoch != 1700000300 {
+		t.Fatalf("unexpected epoch: got %d want %d", meta.epoch, 1700000300)
+	}
+}
+
 func TestDescribeRepoFallsBackToMtimeWhenGitHasNoCommits(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "empty-git")
@@ -215,7 +285,7 @@ func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/b\tbeta" {
+	if got != "/tmp/b\tbeta\tbeta" {
 		t.Fatalf("unexpected selection: %q", got)
 	}
 }
@@ -231,7 +301,7 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/a\talpha" {
+	if got != "/tmp/a\talpha\talpha" {
 		t.Fatalf("unexpected filtered selection: %q", got)
 	}
 }
@@ -245,6 +315,21 @@ func TestPickRepoHeadlessOnlyMatchesNameField(t *testing.T) {
 	_, err := pickRepoHeadless(cfg, candidates)
 	if err == nil {
 		t.Fatal("expected query against root column to miss")
+	}
+}
+
+func TestPickRepoHeadlessMatchesBranchField(t *testing.T) {
+	cfg := config{headlessBench: true, initialQuery: "worktree-ui"}
+	candidates := []candidate{
+		{path: "/tmp/repo", display: "repo", matchText: "repo feature/worktree-ui"},
+	}
+
+	got, err := pickRepoHeadless(cfg, candidates)
+	if err != nil {
+		t.Fatalf("pickRepoHeadless returned error: %v", err)
+	}
+	if got != "/tmp/repo\trepo feature/worktree-ui\trepo" {
+		t.Fatalf("unexpected branch selection: %q", got)
 	}
 }
 
@@ -535,9 +620,6 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 	if !cfg.showRoot {
 		t.Fatal("expected root column to be enabled")
 	}
-	if cfg.searchFieldIndex != 2 {
-		t.Fatalf("unexpected searchFieldIndex: got %d want %d", cfg.searchFieldIndex, 2)
-	}
 	if cfg.nameWidth < 16 {
 		t.Fatalf("expected nameWidth >= 16, got %d", cfg.nameWidth)
 	}
@@ -546,6 +628,77 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 	}
 	if cfg.rootLabels[rootA] != "src" || cfg.rootLabels[rootB] != "archive" {
 		t.Fatalf("unexpected root labels: %v", cfg.rootLabels)
+	}
+}
+
+func TestRenderGitFieldUsesGitIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true}, "main")
+	if !strings.Contains(field, "") || !strings.Contains(field, "main") {
+		t.Fatalf("unexpected git field: %q", field)
+	}
+}
+
+func TestRenderGitFieldUsesWorktreeIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui")
+	if !strings.Contains(field, "󰙅") || !strings.Contains(field, "feature/worktree-ui") {
+		t.Fatalf("unexpected worktree field: %q", field)
+	}
+}
+
+func TestRenderGitFieldUsesLockIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true, isLocked: true}, "main")
+	if !strings.Contains(field, "") {
+		t.Fatalf("unexpected locked field: %q", field)
+	}
+}
+
+func TestRenderGitFieldUsesSubmoduleIcon(t *testing.T) {
+	field := renderGitField(gitMeta{present: true, isSubmodule: true}, "main")
+	if !strings.Contains(field, "") {
+		t.Fatalf("unexpected submodule field: %q", field)
+	}
+}
+
+func TestRenderGitFieldMarksNonGitEntries(t *testing.T) {
+	field := renderGitField(gitMeta{}, "-")
+	if !strings.Contains(field, "-") {
+		t.Fatalf("unexpected non-git field: %q", field)
+	}
+}
+
+func TestDescribeRepoIncludesBranchTextInGitField(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000300", "base")
+
+	cfg := config{
+		showLanguage: false,
+		showGit:      true,
+		now:          1700000400,
+		nameWidth:    24,
+	}
+
+	cand, err := describeRepo(cfg, childDir{
+		name:     filepath.Base(repo),
+		path:     repo,
+		modEpoch: 1700000200,
+	}, true)
+	if err != nil {
+		t.Fatalf("describeRepo returned error: %v", err)
+	}
+
+	fields := strings.Split(cand.display, "\t")
+	if len(fields) != 3 {
+		t.Fatalf("unexpected field count: got %d want %d", len(fields), 3)
+	}
+	if !strings.Contains(fields[1], currentBranchName(t, repo)) {
+		t.Fatalf("expected merged git field in %q", fields[1])
+	}
+}
+
+func TestRenderGitFieldTruncatesLongNames(t *testing.T) {
+	field := renderGitField(gitMeta{present: true}, "feature/this-is-a-very-long-branch-name")
+	if !strings.Contains(field, "...") {
+		t.Fatalf("expected truncated git field, got %q", field)
 	}
 }
 

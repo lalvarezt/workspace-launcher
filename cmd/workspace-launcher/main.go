@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -43,47 +44,49 @@ const (
 	rootFloorWidth = 4
 	langWidth      = 12
 	langLabelWidth = langWidth - 3
-	gitWidth       = 5
+	gitWidth       = 30
 	ageWidth       = 12
 	chromeWidth    = 18
 )
 
 const (
-	cReset    = "\033[0m"
-	cDim      = "\033[38;5;244m"
-	cName     = "\033[38;5;252m"
-	cCurrent  = "\033[38;5;223m"
-	cGo       = "\033[38;5;81m"
-	cRust     = "\033[38;5;209m"
-	cPython   = "\033[38;5;221m"
-	cNode     = "\033[38;5;78m"
-	cLua      = "\033[38;5;111m"
-	cRuby     = "\033[38;5;203m"
-	cNix      = "\033[38;5;110m"
-	cMisc     = "\033[38;5;180m"
-	cGit      = "\033[38;5;109m"
-	cGitDirty = "\033[38;5;215m"
-	cTime     = "\033[38;5;246m"
+	cReset     = "\033[0m"
+	cDim       = "\033[38;5;244m"
+	cName      = "\033[38;5;252m"
+	cCurrent   = "\033[38;5;223m"
+	cGo        = "\033[38;5;81m"
+	cRust      = "\033[38;5;209m"
+	cPython    = "\033[38;5;221m"
+	cNode      = "\033[38;5;78m"
+	cLua       = "\033[38;5;111m"
+	cRuby      = "\033[38;5;203m"
+	cNix       = "\033[38;5;110m"
+	cMisc      = "\033[38;5;180m"
+	cGit       = "\033[38;5;109m"
+	cGitDirty  = "\033[38;5;215m"
+	cWorktree  = "\033[38;5;151m"
+	cGitLock   = "\033[38;5;180m"
+	cSubmodule = "\033[38;5;179m"
+	cTime      = "\033[38;5;246m"
 )
 
 type config struct {
-	mode             string
-	shellBindings    bool
-	initialQuery     string
-	roots            []string
-	rootLabels       map[string]string
-	jobs             int
-	gitDirty         bool
-	recency          string
-	showLanguage     bool
-	showGit          bool
-	showRoot         bool
-	headlessBench    bool
-	now              int64
-	cwd              string
-	rootLabelWidth   int
-	nameWidth        int
-	searchFieldIndex int
+	mode           string
+	shellBindings  bool
+	initialQuery   string
+	roots          []string
+	rootLabels     map[string]string
+	jobs           int
+	gitDirty       bool
+	recency        string
+	showLanguage   bool
+	showGit        bool
+	showRoot       bool
+	headlessBench  bool
+	now            int64
+	cwd            string
+	rootLabelWidth int
+	nameWidth      int
 }
 
 type childDir struct {
@@ -103,6 +106,7 @@ type candidate struct {
 
 type dirFacts struct {
 	hasGit          bool
+	gitIsDir        bool
 	hasGoMod        bool
 	hasCargoToml    bool
 	hasPackageJSON  bool
@@ -114,6 +118,17 @@ type dirFacts struct {
 	hasGemfile      bool
 	hasFlakeNix     bool
 	hasDefaultNix   bool
+}
+
+type gitMeta struct {
+	present     bool
+	isWorktree  bool
+	isLocked    bool
+	isSubmodule bool
+	branchLabel string
+	headHash    string
+	epoch       int64
+	dirty       bool
 }
 
 type gitLayout struct {
@@ -281,11 +296,9 @@ func parseConfig(args []string) (config, error) {
 	}
 	cfg.roots = resolvedRoots
 	cfg.showRoot = len(cfg.roots) > 1
-	cfg.searchFieldIndex = 1
 	if cfg.showRoot {
 		cfg.rootLabels = buildRootLabels(cfg.roots)
 		cfg.rootLabelWidth = computeRootLabelWidth(cfg.rootLabels)
-		cfg.searchFieldIndex = 2
 	}
 
 	cwd, err := os.Getwd()
@@ -338,8 +351,8 @@ Options:
   --query TEXT     Start with an initial query
   --language       Show the language column (default)
   --no-language    Hide the language column
-  --git            Show the git-state column (default)
-  --no-git         Hide the git-state column
+  --git            Show the git metadata column (default)
+  --no-git         Hide the git metadata column
   -v, --version    Show version
   -h, --help       Show this help text
 
@@ -350,10 +363,10 @@ Shell integration:
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directories, split with the OS path list separator (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
-  WORKSPACE_LAUNCHER_GIT_DIRTY      Show dirty repos with git* when set to 1 (default: 0)
+  WORKSPACE_LAUNCHER_GIT_DIRTY      Highlight dirty git entries when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
-  WORKSPACE_LAUNCHER_SHOW_GIT       Show the git-state column when set to 1 (default: 1)
+  WORKSPACE_LAUNCHER_SHOW_GIT       Show the git metadata column when set to 1 (default: 1)
 `, filepath.Base(os.Args[0]))
 }
 
@@ -501,16 +514,82 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 	if inspect {
 		needGit := cfg.showGit || cfg.recency == recencyGit
 		needLanguage := cfg.showLanguage
-		languageDetected := false
-		entries, err := os.ReadDir(child.path)
+		var err error
+		facts, err = collectDirFacts(child.path, needGit, needLanguage)
 		if err != nil {
 			return candidate{}, err
 		}
+	}
+
+	epoch := child.modEpoch
+	git := gitMeta{}
+	if facts.hasGit && (cfg.showGit || cfg.recency == recencyGit) {
+		git = inspectGitMeta(child.path, facts.gitIsDir, cfg.showGit, cfg.recency == recencyGit, cfg.gitDirty && cfg.showGit)
+	}
+	if cfg.recency == recencyGit && git.epoch > 0 {
+		epoch = git.epoch
+	}
+
+	lang := ""
+	if cfg.showLanguage {
+		lang = detectLanguage(facts)
+	}
+
+	branch := git.branchLabel
+	if branch == "" {
+		branch = "-"
+	}
+
+	markerField := paintField(cDim, " ")
+	if isCurrentRepo(cfg.cwd, child.path) {
+		markerField = paintField(cCurrent, "*")
+	}
+	nameField := markerField + " " + paintField(cName, fitField(child.name, cfg.nameWidth))
+	ageField := paintField(cTime, fitField(formatAge(cfg.now, epoch), ageWidth))
+
+	fields := make([]string, 0, 4)
+	if cfg.showRoot {
+		fields = append(fields, paintField(cDim, fitField(child.rootLabel, cfg.rootLabelWidth)))
+	}
+	fields = append(fields, nameField)
+	if cfg.showLanguage {
+		fields = append(fields, renderLangField(lang))
+	}
+	if cfg.showGit {
+		fields = append(fields, renderGitField(git, branch))
+	}
+	fields = append(fields, ageField)
+
+	matchText := child.name
+	if git.branchLabel != "" && git.branchLabel != "-" {
+		matchText += " " + git.branchLabel
+	}
+
+	return candidate{
+		path:      child.path,
+		display:   strings.Join(fields, "\t"),
+		matchText: matchText,
+		epoch:     epoch,
+	}, nil
+}
+
+func collectDirFacts(dir string, needGit, needLanguage bool) (dirFacts, error) {
+	facts := dirFacts{}
+	languageDetected := false
+
+	file, err := os.Open(dir)
+	if err != nil {
+		return facts, err
+	}
+	defer file.Close()
+
+	for {
+		entries, readErr := file.ReadDir(16)
 		for _, entry := range entries {
-			name := entry.Name()
-			switch name {
+			switch entry.Name() {
 			case ".git":
 				facts.hasGit = true
+				facts.gitIsDir = entry.IsDir()
 			case "go.mod":
 				facts.hasGoMod = true
 			case "Cargo.toml":
@@ -539,54 +618,17 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 				languageDetected = true
 			}
 			if (!needGit || facts.hasGit) && (!needLanguage || languageDetected) {
-				break
+				return facts, nil
 			}
 		}
-	}
 
-	epoch := child.modEpoch
-	if cfg.recency == recencyGit && facts.hasGit {
-		if gitEpoch, err := gitLastCommitEpochFast(child.path); err == nil && gitEpoch > 0 {
-			epoch = gitEpoch
+		if errors.Is(readErr, io.EOF) {
+			return facts, nil
+		}
+		if readErr != nil {
+			return facts, readErr
 		}
 	}
-
-	lang := ""
-	if cfg.showLanguage {
-		lang = detectLanguage(facts)
-	}
-
-	gitState := ""
-	if cfg.showGit {
-		gitState = detectGitState(cfg, child.path, facts.hasGit)
-	}
-
-	markerField := paintField(cDim, " ")
-	if isCurrentRepo(cfg.cwd, child.path) {
-		markerField = paintField(cCurrent, "*")
-	}
-	nameField := markerField + " " + paintField(cName, fitField(child.name, cfg.nameWidth))
-	ageField := paintField(cTime, fitField(formatAge(cfg.now, epoch), ageWidth))
-
-	fields := make([]string, 0, 4)
-	if cfg.showRoot {
-		fields = append(fields, paintField(cDim, fitField(child.rootLabel, cfg.rootLabelWidth)))
-	}
-	fields = append(fields, nameField)
-	if cfg.showLanguage {
-		fields = append(fields, renderLangField(lang))
-	}
-	if cfg.showGit {
-		fields = append(fields, renderGitField(gitState))
-	}
-	fields = append(fields, ageField)
-
-	return candidate{
-		path:      child.path,
-		display:   strings.Join(fields, "\t"),
-		matchText: child.name,
-		epoch:     epoch,
-	}, nil
 }
 
 func buildRootLabels(roots []string) map[string]string {
@@ -714,30 +756,118 @@ func detectLanguage(facts dirFacts) string {
 	}
 }
 
-func detectGitState(cfg config, dir string, hasGit bool) string {
-	if !hasGit {
-		return "-"
+func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool) gitMeta {
+	meta := gitMeta{
+		present:     true,
+		branchLabel: "-",
 	}
-	if !cfg.gitDirty {
-		return "git"
+
+	if !wantBranch && !wantEpoch {
+		meta.isWorktree = !gitIsDir
+		if !gitIsDir {
+			gitDir, isWorktree, err := inspectDotGit(dir)
+			if err == nil {
+				meta.isWorktree = isWorktree
+				meta.isSubmodule, meta.isLocked = classifyLinkedGitDir(gitDir, isWorktree)
+				if meta.isSubmodule {
+					meta.isWorktree = false
+				}
+			}
+		}
+		if wantDirty {
+			if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
+				meta.dirty = dirty
+			}
+		}
+		return meta
 	}
-	dirty, err := gitIsDirty(dir)
-	if err != nil {
-		return "git"
+
+	gitDir := filepath.Join(dir, ".git")
+	isWorktree := false
+	if !gitIsDir {
+		var err error
+		gitDir, isWorktree, err = inspectDotGit(dir)
+		if err != nil {
+			if wantDirty {
+				if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
+					meta.dirty = dirty
+				}
+			}
+			if wantEpoch {
+				if epoch, epochErr := gitLastCommitEpochSlow(dir); epochErr == nil && epoch > 0 {
+					meta.epoch = epoch
+				}
+			}
+			return meta
+		}
 	}
-	if dirty {
-		return "git*"
+
+	meta.isWorktree = isWorktree
+	meta.isSubmodule, meta.isLocked = classifyLinkedGitDir(gitDir, isWorktree)
+	if meta.isSubmodule {
+		meta.isWorktree = false
 	}
-	return "git"
+	if wantEpoch {
+		layout, layoutErr := finalizeGitLayout(gitDir)
+		if layoutErr == nil {
+			head, headErr := readHead(layout)
+			if headErr == nil {
+				if wantBranch {
+					meta.branchLabel = formatHeadLabel(head)
+				}
+				if hash, resolveErr := resolveHeadHashFromHead(layout, head); resolveErr == nil {
+					meta.headHash = hash
+					if epoch, readErr := readCommitEpoch(layout, hash); readErr == nil && epoch > 0 {
+						meta.epoch = epoch
+					}
+				}
+			}
+		}
+	} else {
+		head, headErr := readHeadFile(gitDir)
+		if headErr == nil && wantBranch {
+			meta.branchLabel = formatHeadLabel(head)
+		}
+	}
+
+	if wantEpoch && meta.epoch <= 0 {
+		if epoch, epochErr := gitLastCommitEpochSlow(dir); epochErr == nil && epoch > 0 {
+			meta.epoch = epoch
+		}
+	}
+	if wantDirty {
+		if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
+			meta.dirty = dirty
+		}
+	}
+
+	return meta
+}
+
+func classifyLinkedGitDir(gitDir string, isWorktree bool) (bool, bool) {
+	if !isWorktree {
+		return false, false
+	}
+	modulesDir := string(filepath.Separator) + "modules" + string(filepath.Separator)
+	if strings.Contains(gitDir, modulesDir) {
+		return true, false
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "locked")); err == nil {
+		return false, true
+	}
+	return false, false
 }
 
 func gitLastCommitEpochFast(dir string) (int64, error) {
 	layout, err := resolveGitLayout(dir)
 	if err == nil {
-		headHash, resolveErr := resolveHeadHash(layout)
-		if resolveErr == nil {
-			if epoch, readErr := readCommitEpoch(layout, headHash); readErr == nil && epoch > 0 {
-				return epoch, nil
+		head, headErr := readHead(layout)
+		if headErr == nil {
+			headHash, resolveErr := resolveHeadHashFromHead(layout, head)
+			if resolveErr == nil {
+				if epoch, readErr := readCommitEpoch(layout, headHash); readErr == nil && epoch > 0 {
+					return epoch, nil
+				}
 			}
 		}
 	}
@@ -762,30 +892,37 @@ func gitLastCommitEpochSlow(dir string) (int64, error) {
 }
 
 func resolveGitLayout(dir string) (gitLayout, error) {
-	gitPath := filepath.Join(dir, ".git")
-	info, err := os.Stat(gitPath)
+	gitDir, _, err := inspectDotGit(dir)
 	if err != nil {
 		return gitLayout{}, err
 	}
-	gitDir := gitPath
+	return finalizeGitLayout(filepath.Clean(gitDir))
+}
+
+func inspectDotGit(dir string) (string, bool, error) {
+	gitPath := filepath.Join(dir, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return "", false, err
+	}
 	if info.IsDir() {
-		return finalizeGitLayout(gitDir)
+		return gitPath, false, nil
 	}
 
 	content, err := os.ReadFile(gitPath)
 	if err != nil {
-		return gitLayout{}, err
+		return "", false, err
 	}
 	line := strings.TrimSpace(string(content))
 	const prefix = "gitdir: "
 	if !strings.HasPrefix(line, prefix) {
-		return gitLayout{}, errors.New("unsupported .git file format")
+		return "", false, errors.New("unsupported .git file format")
 	}
-	gitDir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(dir, gitDir)
 	}
-	return finalizeGitLayout(filepath.Clean(gitDir))
+	return filepath.Clean(gitDir), true, nil
 }
 
 func finalizeGitLayout(gitDir string) (gitLayout, error) {
@@ -811,8 +948,12 @@ func finalizeGitLayout(gitDir string) (gitLayout, error) {
 	return layout, nil
 }
 
-func resolveHeadHash(layout gitLayout) (string, error) {
-	content, err := os.ReadFile(filepath.Join(layout.gitDir, "HEAD"))
+func readHead(layout gitLayout) (string, error) {
+	return readHeadFile(layout.gitDir)
+}
+
+func readHeadFile(gitDir string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
 		return "", err
 	}
@@ -820,6 +961,18 @@ func resolveHeadHash(layout gitLayout) (string, error) {
 	if head == "" {
 		return "", errors.New("empty HEAD")
 	}
+	return head, nil
+}
+
+func resolveHeadHash(layout gitLayout) (string, error) {
+	head, err := readHead(layout)
+	if err != nil {
+		return "", err
+	}
+	return resolveHeadHashFromHead(layout, head)
+}
+
+func resolveHeadHashFromHead(layout gitLayout, head string) (string, error) {
 	if !strings.HasPrefix(head, "ref: ") {
 		return head, nil
 	}
@@ -836,6 +989,41 @@ func resolveHeadHash(layout gitLayout) (string, error) {
 	}
 
 	return lookupPackedRef(layout, refName)
+}
+
+func formatHeadLabel(head string) string {
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return "-"
+	}
+	if strings.HasPrefix(head, "ref: ") {
+		return formatRefLabel(strings.TrimSpace(strings.TrimPrefix(head, "ref: ")))
+	}
+	if len(head) > 7 {
+		head = head[:7]
+	}
+	return "detached@" + head
+}
+
+func formatRefLabel(refName string) string {
+	refName = strings.TrimSpace(refName)
+	if refName == "" {
+		return "-"
+	}
+	switch {
+	case strings.HasPrefix(refName, "refs/heads/"):
+		return strings.TrimPrefix(refName, "refs/heads/")
+	case strings.HasPrefix(refName, "refs/remotes/"):
+		return strings.TrimPrefix(refName, "refs/remotes/")
+	case strings.HasPrefix(refName, "refs/"):
+		tail := strings.TrimPrefix(refName, "refs/")
+		if strings.Count(tail, "/") <= 1 {
+			return path.Base(tail)
+		}
+		return tail
+	default:
+		return path.Base(refName)
+	}
 }
 
 func lookupPackedRef(layout gitLayout, refName string) (string, error) {
@@ -976,8 +1164,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		"--footer-border=line",
 		"--info=hidden",
 		"--delimiter=\t",
-		"--with-nth=2..",
-		"--nth="+strconv.Itoa(cfg.searchFieldIndex),
+		"--with-nth=3..",
+		"--nth=2",
 		"--expect=ctrl-e",
 		"--query="+cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
@@ -1038,7 +1226,7 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 }
 
 func serializeCandidate(cand candidate) string {
-	return cand.path + "\t" + cand.display
+	return cand.path + "\t" + cand.matchText + "\t" + cand.display
 }
 
 func splitResult(result string) (string, string) {
@@ -1230,15 +1418,33 @@ func renderLangField(lang string) string {
 	return paintField(color, iconCell+fitField(label, langLabelWidth))
 }
 
-func renderGitField(state string) string {
-	switch state {
-	case "git":
-		return paintField(cGit, fitField("git", gitWidth))
-	case "git*":
-		return paintField(cGitDirty, fitField("git*", gitWidth))
-	default:
+func renderGitField(meta gitMeta, branch string) string {
+	if !meta.present {
 		return paintField(cDim, fitField("-", gitWidth))
 	}
+
+	icon := ""
+	color := cGit
+	switch {
+	case meta.isLocked:
+		icon = ""
+		color = cGitLock
+	case meta.isWorktree:
+		icon = "󰙅"
+		color = cWorktree
+	case meta.isSubmodule:
+		icon = ""
+		color = cSubmodule
+	}
+	if meta.dirty {
+		color = cGitDirty
+	}
+
+	text := icon
+	if branch != "" && branch != "-" {
+		text += " " + branch
+	}
+	return paintField(color, fitField(text, gitWidth))
 }
 
 func expandHome(path string) string {
