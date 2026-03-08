@@ -21,6 +21,7 @@ import (
 
 	shellscripts "github.com/lalvarezt/workspace-launcher/shell"
 	"golang.org/x/term"
+	"golang.org/x/text/width"
 )
 
 const appName = "workspace-launcher"
@@ -784,16 +785,16 @@ func applyLayoutWidths(cfg *config) {
 	cfg.nameWidth = cfg.cols - chromeWidth - metaWidth
 	if cfg.showRoot {
 		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
-		if cfg.nameWidth < 16 {
-			cfg.rootLabelWidth -= 16 - cfg.nameWidth
+		if cfg.nameWidth < nameMinWidth {
+			cfg.rootLabelWidth -= nameMinWidth - cfg.nameWidth
 			if cfg.rootLabelWidth < rootFloorWidth {
 				cfg.rootLabelWidth = rootFloorWidth
 			}
 			cfg.nameWidth = cfg.cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
 		}
 	}
-	if cfg.nameWidth < 16 {
-		cfg.nameWidth = 16
+	if cfg.nameWidth < nameMinWidth {
+		cfg.nameWidth = nameMinWidth
 	}
 }
 
@@ -924,8 +925,16 @@ func classifyLinkedGitDir(gitDir string, isWorktree bool) (bool, bool) {
 	if !isWorktree {
 		return false, false
 	}
-	modulesDir := string(filepath.Separator) + "modules" + string(filepath.Separator)
-	if strings.Contains(gitDir, modulesDir) {
+
+	cleanParts := strings.Split(filepath.Clean(gitDir), string(filepath.Separator))
+	gitIndex := -1
+	for i := len(cleanParts) - 1; i >= 0; i-- {
+		if cleanParts[i] == ".git" {
+			gitIndex = i
+			break
+		}
+	}
+	if gitIndex >= 0 && gitIndex+1 < len(cleanParts) && cleanParts[gitIndex+1] == "modules" {
 		return true, false
 	}
 	if _, err := os.Stat(filepath.Join(gitDir, "locked")); err == nil {
@@ -1479,8 +1488,14 @@ func runeDisplayWidth(r rune) int {
 		return 1
 	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
 		return 0
-	default:
+	case unicode.In(r, unicode.Co):
 		return 2
+	default:
+		kind := width.LookupRune(r).Kind()
+		if kind == width.EastAsianWide || kind == width.EastAsianFullwidth {
+			return 2
+		}
+		return 1
 	}
 }
 

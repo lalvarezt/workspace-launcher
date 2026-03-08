@@ -164,6 +164,30 @@ func TestInspectGitMetaWorktreeBranch(t *testing.T) {
 	}
 }
 
+func TestInspectGitMetaWorktreeUnderModulesPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "modules")
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	runGit(t, repo, "init", "--initial-branch=main")
+	runGit(t, repo, "config", "user.name", "test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	commitAt(t, repo, "1700000300", "base")
+
+	worktree := filepath.Join(root, "wt")
+	runGit(t, repo, "worktree", "add", "-b", "feature/modules-path", worktree)
+
+	meta := inspectGitMeta(worktree, false, true, true, false)
+
+	if !meta.isWorktree {
+		t.Fatal("expected linked worktree")
+	}
+	if meta.isSubmodule {
+		t.Fatal("expected normal worktree, got submodule")
+	}
+}
+
 func TestDescribeRepoFallsBackToMtimeWhenGitHasNoCommits(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "empty-git")
@@ -718,6 +742,15 @@ func TestComputeGitColumnWidthClampsAtMax(t *testing.T) {
 	})
 	if width != gitMaxWidth {
 		t.Fatalf("unexpected clamped width: got %d want %d", width, gitMaxWidth)
+	}
+}
+
+func TestDisplayWidthTreatsAccentedLatinAsSingleWidth(t *testing.T) {
+	if got := displayWidth("cafe"); got != 4 {
+		t.Fatalf("unexpected ASCII width: got %d want 4", got)
+	}
+	if got := displayWidth("café"); got != 4 {
+		t.Fatalf("unexpected accented width: got %d want 4", got)
 	}
 }
 
