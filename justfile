@@ -34,15 +34,66 @@ install bin_dir="":
     ln -sfn workspace-launcher "$target/wl"
     printf 'Installed workspace-launcher, bench-setup, and wl to %s\n' "$target"
 
-bump-version version:
+bump-version target="patch":
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{version}}" in
-      v[0-9]*.[0-9]*.[0-9]*) ;;
+    target="{{target}}"
+    if [[ "$target" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      just set-version "$target"
+      exit 0
+    fi
+
+    current_version="$(tr -d '\n' < VERSION)"
+    if [[ ! "$current_version" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+      printf 'VERSION must look like v1.2.3, found %s\n' "$current_version" >&2
+      exit 1
+    fi
+
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
+
+    case "$target" in
+      major)
+        major=$((major + 1))
+        minor=0
+        patch=0
+        ;;
+      minor)
+        minor=$((minor + 1))
+        patch=0
+        ;;
+      patch)
+        patch=$((patch + 1))
+        ;;
       *)
-        printf 'version must look like v1.2.3\n' >&2
+        printf 'bump target must be major, minor, patch, or an explicit version like v1.2.3\n' >&2
         exit 1
         ;;
     esac
-    printf '%s\n' "{{version}}" > VERSION
-    perl -0pi -e 's/version-v[0-9]+\.[0-9]+\.[0-9]+-cb8d43\.svg/version-{{version}}-cb8d43.svg/' README.md
+
+    just set-version "v${major}.${minor}.${patch}"
+
+set-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="{{version}}"
+    if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf 'version must look like v1.2.3\n' >&2
+      exit 1
+    fi
+
+    tmp_dir="$(mktemp -d)"
+    cleanup() {
+      rm -rf "$tmp_dir"
+    }
+    trap cleanup EXIT
+
+    printf '%s\n' "$version" > "$tmp_dir/VERSION"
+    if ! VERSION="$version" perl -0pe '$count = s/version-v[^)]+-cb8d43\.svg/version-$ENV{VERSION}-cb8d43.svg/; END { exit($count == 1 ? 0 : 1) }' README.md > "$tmp_dir/README.md"; then
+      printf 'failed to update version badge in README.md\n' >&2
+      exit 1
+    fi
+
+    mv "$tmp_dir/VERSION" VERSION
+    mv "$tmp_dir/README.md" README.md

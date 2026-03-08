@@ -29,6 +29,10 @@ Arguments:
 EOF
 }
 
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin-dir)
@@ -87,8 +91,8 @@ detect_target() {
       os="darwin"
       ;;
     *)
-      printf 'unsupported operating system: %s\n' "$(uname -s)" >&2
-      exit 1
+      printf 'unsupported operating system for release archives: %s\n' "$(uname -s)" >&2
+      return 1
       ;;
   esac
 
@@ -100,24 +104,68 @@ detect_target() {
       arch="arm64"
       ;;
     *)
-      printf 'unsupported architecture: %s\n' "$(uname -m)" >&2
-      exit 1
+      printf 'unsupported architecture for release archives: %s\n' "$(uname -m)" >&2
+      return 1
       ;;
   esac
 
   printf '%s_%s\n' "$os" "$arch"
 }
 
+install_from_release() {
+  local tag="$1"
+  local target
+  local version_no_v
+  local archive
+  local url
+
+  target="$(detect_target)" || return 1
+  version_no_v="${tag#v}"
+  archive="workspace-launcher_${version_no_v}_${target}.tar.gz"
+  url="$repo_url/releases/download/$tag/$archive"
+
+  if ! curl -fsSL "$url" -o "$stage_dir/$archive"; then
+    return 1
+  fi
+
+  if ! tar -xzf "$stage_dir/$archive" -C "$stage_dir" workspace-launcher; then
+    return 1
+  fi
+
+  if ! install -m 755 "$stage_dir/workspace-launcher" "$bin_dir/workspace-launcher"; then
+    return 1
+  fi
+
+  install_alias
+
+  printf 'Installed workspace-launcher and wl to %s from release %s\n' "$bin_dir" "$tag"
+}
+
+install_from_go() {
+  local tag="$1"
+  local module_ref="latest"
+
+  if ! command_exists go; then
+    return 1
+  fi
+
+  if [[ "$ref" != "latest" ]]; then
+    module_ref="$tag"
+  fi
+
+  GOBIN="$bin_dir" go install "github.com/lalvarezt/workspace-launcher/cmd/workspace-launcher@$module_ref"
+  install_alias
+
+  printf 'Installed workspace-launcher and wl to %s via go install (%s)\n' "$bin_dir" "$module_ref"
+}
+
 stage_dir="$(mktemp -d)"
 tag="$(resolve_tag)"
-target="$(detect_target)"
-version_no_v="${tag#v}"
-archive="workspace-launcher_${version_no_v}_${target}.tar.gz"
-url="$repo_url/releases/download/$tag/$archive"
 
-curl -fsSL "$url" -o "$stage_dir/$archive"
-tar -xzf "$stage_dir/$archive" -C "$stage_dir" workspace-launcher
-install -m 755 "$stage_dir/workspace-launcher" "$bin_dir/workspace-launcher"
-install_alias
-
-printf 'Installed workspace-launcher and wl to %s\n' "$bin_dir"
+if ! install_from_release "$tag"; then
+  printf 'Falling back to go install for %s\n' "$tag" >&2
+  if ! install_from_go "$tag"; then
+    printf 'failed to install workspace-launcher from release archives and go is not available\n' >&2
+    exit 1
+  fi
+fi

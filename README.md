@@ -153,7 +153,8 @@ just test
 just build
 just run -- --query fzf ~/src
 just install
-just bump-version v1.0.5
+just bump-version patch
+just set-version v1.0.5
 ```
 
 `just install` builds the local checkout and installs `workspace-launcher` and
@@ -166,6 +167,9 @@ look like this:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/lalvarezt/workspace-launcher/main/install.sh | bash
 ```
+
+If no matching release archive is available for the current system, `install.sh`
+falls back to `go install` when `go` is present.
 
 You can also install with Go:
 
