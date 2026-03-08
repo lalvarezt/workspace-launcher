@@ -35,8 +35,10 @@ jobs:
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             tag="${{ inputs.tag }}"
+            draft=false
           else
             tag="${GITHUB_REF_NAME}"
+            draft=true
           fi
 
           git rev-parse "refs/tags/$tag" >/dev/null 2>&1 || {
@@ -53,6 +55,7 @@ jobs:
           fi
 
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'draft=%s\n' "$draft" >> "$GITHUB_OUTPUT"
 
       - name: Build release assets
         shell: bash
@@ -86,6 +89,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
+          draft: ${{ steps.meta.outputs.draft == 'true' }}
           files: |
             dist/bin/*
             dist/*.tar.gz
