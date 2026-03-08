@@ -310,7 +310,7 @@ func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/b\tbeta\tbeta" {
+	if got != "/tmp/b\tbeta\t\t\tbeta" {
 		t.Fatalf("unexpected selection: %q", got)
 	}
 }
@@ -326,7 +326,7 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/a\talpha\talpha" {
+	if got != "/tmp/a\talpha\t\t\talpha" {
 		t.Fatalf("unexpected filtered selection: %q", got)
 	}
 }
@@ -346,14 +346,14 @@ func TestPickRepoHeadlessOnlyMatchesNameField(t *testing.T) {
 func TestPickRepoHeadlessMatchesBranchField(t *testing.T) {
 	cfg := config{headlessBench: true, initialQuery: "worktree-ui"}
 	candidates := []candidate{
-		{path: "/tmp/repo", display: "repo", matchText: "repo feature/worktree-ui"},
+		{path: "/tmp/repo", display: "repo", matchText: "repo", branchText: "feature/worktree-ui"},
 	}
 
 	got, err := pickRepoHeadless(cfg, candidates)
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/repo\trepo feature/worktree-ui\trepo" {
+	if got != "/tmp/repo\trepo\t\tfeature/worktree-ui\trepo" {
 		t.Fatalf("unexpected branch selection: %q", got)
 	}
 }
@@ -367,6 +367,34 @@ func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
 	}
 	if result != "" {
 		t.Fatalf("expected empty result on abort, got %q", result)
+	}
+}
+
+func TestPickRepoPassesHistoryScheme(t *testing.T) {
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	quotedArgsPath := "'" + strings.ReplaceAll(argsPath, "'", "'\\''") + "'"
+	fzfPath := writeTestScript(t, "#!/bin/sh\nprintf '%s\n' \"$@\" > "+quotedArgsPath+"\nexit 130\n")
+
+	result, err := pickRepo(config{}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	if err != nil {
+		t.Fatalf("pickRepo returned error: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected empty result on abort, got %q", result)
+	}
+
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	if !strings.Contains(string(args), "--scheme=history\n") {
+		t.Fatalf("expected --scheme=history in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), "--with-nth=5..\n") {
+		t.Fatalf("expected --with-nth=5.. in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), "--nth=2,4\n") {
+		t.Fatalf("expected --nth=2,4 in fzf args, got %q", string(args))
 	}
 }
 
