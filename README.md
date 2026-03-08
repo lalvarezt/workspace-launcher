@@ -1,7 +1,7 @@
 # workspace-launcher
 
 [![License](https://img.shields.io/badge/license-MIT-3d3d3d.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v2.1.0-cb8d43.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-v2.2.0-cb8d43.svg)](VERSION)
 [![Last Commit](https://img.shields.io/github/last-commit/lalvarezt/workspace-launcher)](https://github.com/lalvarezt/workspace-launcher/commits/main)
 [![Language](https://img.shields.io/badge/language-go-00ADD8.svg)](go.mod)
 
