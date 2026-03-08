@@ -312,10 +312,8 @@ Options:
   -h, --help       Show this help text
 
 Shell integration:
-  bash/zsh         Load with source <(workspace-launcher --bash|--zsh)
-                   Add --bindings to also install the default Ctrl-G binding
-  fish             Load with workspace-launcher --fish | source
-                   Add --bindings to also install the default Ctrl-G binding
+  bash/zsh         source <(workspace-launcher --bash|--zsh [--bindings])
+  fish             workspace-launcher --fish [--bindings] | source
 
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
