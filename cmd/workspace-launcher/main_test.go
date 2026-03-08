@@ -236,7 +236,7 @@ func TestRenderShellIntegrationIncludesPreludeAndWidget(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		script, err := renderShellIntegrationForPath(tt.mode, tempExe)
+		script, err := renderShellIntegrationForPath(tt.mode, tempExe, false)
 		if err != nil {
 			t.Fatalf("renderShellIntegration(%s) returned error: %v", tt.mode, err)
 		}
@@ -246,6 +246,68 @@ func TestRenderShellIntegrationIncludesPreludeAndWidget(t *testing.T) {
 		if !strings.Contains(script, tt.wantSnippet) {
 			t.Fatalf("expected widget for %s in %q", tt.mode, script)
 		}
+	}
+}
+
+func TestRenderShellIntegrationOmitsBindingsByDefault(t *testing.T) {
+	tests := []struct {
+		mode   string
+		wantNo string
+	}{
+		{mode: modeBash, wantNo: `bind -m emacs-standard`},
+		{mode: modeZsh, wantNo: `bindkey -M emacs '^G' workspace-launcher-widget`},
+		{mode: modeFish, wantNo: `bind \cg workspace-launcher-widget`},
+	}
+
+	for _, tt := range tests {
+		script, err := renderShellIntegrationForPath(tt.mode, "/tmp/workspace-launcher", false)
+		if err != nil {
+			t.Fatalf("renderShellIntegration(%s) returned error: %v", tt.mode, err)
+		}
+		if strings.Contains(script, tt.wantNo) {
+			t.Fatalf("expected %s integration to omit default bindings in %q", tt.mode, script)
+		}
+	}
+}
+
+func TestRenderShellIntegrationIncludesBindingsWhenRequested(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{mode: modeBash, want: `bind -m emacs-standard`},
+		{mode: modeZsh, want: `bindkey -M emacs '^G' workspace-launcher-widget`},
+		{mode: modeFish, want: `bind \cg workspace-launcher-widget`},
+	}
+
+	for _, tt := range tests {
+		script, err := renderShellIntegrationForPath(tt.mode, "/tmp/workspace-launcher", true)
+		if err != nil {
+			t.Fatalf("renderShellIntegration(%s) returned error: %v", tt.mode, err)
+		}
+		if !strings.Contains(script, tt.want) {
+			t.Fatalf("expected %s integration to include bindings in %q", tt.mode, script)
+		}
+	}
+}
+
+func TestParseConfigRejectsBindingsWithoutShellMode(t *testing.T) {
+	_, err := parseConfig([]string{"--bindings"})
+	if err == nil || err.Error() != "--bindings can only be used with --bash, --zsh, or --fish" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseConfigAcceptsBindingsWithShellMode(t *testing.T) {
+	cfg, err := parseConfig([]string{"--zsh", "--bindings"})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+	if cfg.mode != modeZsh {
+		t.Fatalf("unexpected mode: got %q want %q", cfg.mode, modeZsh)
+	}
+	if !cfg.shellBindings {
+		t.Fatal("expected shellBindings to be enabled")
 	}
 }
 

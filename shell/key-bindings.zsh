@@ -31,7 +31,4 @@ if [[ -o interactive ]]; then
   }
 
   zle -N workspace-launcher-widget
-  bindkey -M emacs '^G' workspace-launcher-widget
-  bindkey -M vicmd '^G' workspace-launcher-widget
-  bindkey -M viins '^G' workspace-launcher-widget
 fi

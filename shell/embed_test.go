@@ -15,20 +15,20 @@ func TestGeneratedScriptsInjectBinaryPreludeWithoutFallback(t *testing.T) {
 	}{
 		{
 			name:       "bash",
-			script:     Bash(`/tmp/workspace-launcher$bin"test`),
+			script:     Bash(`/tmp/workspace-launcher$bin"test`, false),
 			wantPrefix: "__workspace_launcher_bin='",
 			noFallback: `: "${__workspace_launcher_bin:=workspace-launcher}"`,
 			noCompat:   `BASH_VERSINFO`,
 		},
 		{
 			name:       "zsh",
-			script:     Zsh(`/tmp/workspace-launcher$bin"test`),
+			script:     Zsh(`/tmp/workspace-launcher$bin"test`, false),
 			wantPrefix: "__workspace_launcher_bin='",
 			noFallback: `: "${__workspace_launcher_bin:=workspace-launcher}"`,
 		},
 		{
 			name:       "fish",
-			script:     Fish(`/tmp/workspace-launcher$bin"test`),
+			script:     Fish(`/tmp/workspace-launcher$bin"test`, false),
 			wantPrefix: `set -g __workspace_launcher_bin "`,
 			noFallback: `set -q __workspace_launcher_bin; or set -g __workspace_launcher_bin workspace-launcher`,
 		},
@@ -48,7 +48,7 @@ func TestGeneratedScriptsInjectBinaryPreludeWithoutFallback(t *testing.T) {
 }
 
 func TestBashScriptUsesAcceptLineRefreshFlow(t *testing.T) {
-	script := Bash("/tmp/workspace-launcher")
+	script := Bash("/tmp/workspace-launcher", true)
 	for _, want := range []string{
 		`__workspace_launcher_widget_key='\C-x\C-_W1\a'`,
 		`__workspace_launcher_accept_key='\C-x\C-_W0\a'`,
@@ -57,6 +57,42 @@ func TestBashScriptUsesAcceptLineRefreshFlow(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("bash script missing %q in %q", want, script)
+		}
+	}
+}
+
+func TestGeneratedScriptsOmitBindingsByDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		wantNo string
+	}{
+		{name: "bash", script: Bash("/tmp/workspace-launcher", false), wantNo: `bind -m emacs-standard`},
+		{name: "zsh", script: Zsh("/tmp/workspace-launcher", false), wantNo: `bindkey -M emacs '^G' workspace-launcher-widget`},
+		{name: "fish", script: Fish("/tmp/workspace-launcher", false), wantNo: `bind \cg workspace-launcher-widget`},
+	}
+
+	for _, tt := range tests {
+		if strings.Contains(tt.script, tt.wantNo) {
+			t.Fatalf("%s script unexpectedly includes bindings: %q", tt.name, tt.script)
+		}
+	}
+}
+
+func TestGeneratedScriptsIncludeBindingsWhenRequested(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		want   string
+	}{
+		{name: "bash", script: Bash("/tmp/workspace-launcher", true), want: `bind -m emacs-standard`},
+		{name: "zsh", script: Zsh("/tmp/workspace-launcher", true), want: `bindkey -M emacs '^G' workspace-launcher-widget`},
+		{name: "fish", script: Fish("/tmp/workspace-launcher", true), want: `bind \cg workspace-launcher-widget`},
+	}
+
+	for _, tt := range tests {
+		if !strings.Contains(tt.script, tt.want) {
+			t.Fatalf("%s script missing bindings: %q", tt.name, tt.script)
 		}
 	}
 }
