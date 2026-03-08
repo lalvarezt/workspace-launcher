@@ -105,10 +105,11 @@ type childDir struct {
 }
 
 type candidate struct {
-	path      string
-	display   string
-	matchText string
-	epoch     int64
+	path       string
+	display    string
+	matchText  string
+	branchText string
+	epoch      int64
 }
 
 type repoDetails struct {
@@ -530,16 +531,11 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 		lang = detectLanguage(facts)
 	}
 
-	matchText := child.name
-	if git.branchLabel != "" && git.branchLabel != "-" {
-		matchText += " " + git.branchLabel
-	}
-
 	return repoDetails{
 		child:     child,
 		lang:      lang,
 		git:       git,
-		matchText: matchText,
+		matchText: child.name,
 		epoch:     epoch,
 	}, nil
 }
@@ -580,10 +576,11 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		fields = append(fields, ageField)
 
 		out[i] = candidate{
-			path:      detail.child.path,
-			display:   strings.Join(fields, "\t"),
-			matchText: detail.matchText,
-			epoch:     detail.epoch,
+			path:       detail.child.path,
+			display:    strings.Join(fields, "\t"),
+			matchText:  detail.matchText,
+			branchText: branchSearchText(detail.git.branchLabel),
+			epoch:      detail.epoch,
 		}
 	}
 	return out
@@ -1230,9 +1227,9 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		return pickRepoHeadless(cfg, candidates)
 	}
 
-	cmd := exec.Command(
-		fzfPath,
+	args := []string{
 		"--ansi",
+		"--scheme=history",
 		"--layout=reverse",
 		"--prompt=",
 		"--pointer=▌",
@@ -1250,14 +1247,15 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		"--footer-border=line",
 		"--info=hidden",
 		"--delimiter=\t",
-		"--with-nth=3..",
-		"--nth=2",
+		"--with-nth=5..",
+		"--nth=2,4",
 		"--expect=ctrl-e",
-		"--query="+cfg.initialQuery,
+		"--query=" + cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
 		"--bind=ctrl-n:print-query+accept",
 		"--bind=result:transform-list-label:printf \" Folders (%s) \" \"$FZF_MATCH_COUNT\"",
-	)
+	}
+	cmd := exec.Command(fzfPath, args...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1292,7 +1290,7 @@ func pickRepoHeadless(cfg config, candidates []candidate) (string, error) {
 	query := strings.ToLower(cfg.initialQuery)
 	for _, cand := range candidates {
 		line := serializeCandidate(cand)
-		if query == "" || strings.Contains(strings.ToLower(cand.matchText), query) {
+		if query == "" || strings.Contains(strings.ToLower(candidateSearchText(cand)), query) {
 			return line, nil
 		}
 	}
@@ -1323,7 +1321,21 @@ func isClosedPickerPipe(err error) bool {
 }
 
 func serializeCandidate(cand candidate) string {
-	return cand.path + "\t" + cand.matchText + "\t" + cand.display
+	return cand.path + "\t" + cand.matchText + "\t\t" + cand.branchText + "\t" + cand.display
+}
+
+func candidateSearchText(cand candidate) string {
+	if cand.branchText == "" {
+		return cand.matchText
+	}
+	return cand.matchText + " " + cand.branchText
+}
+
+func branchSearchText(branch string) string {
+	if branch == "" || branch == "-" {
+		return ""
+	}
+	return branch
 }
 
 func splitResult(result string) (string, string) {
