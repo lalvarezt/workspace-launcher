@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -888,7 +887,7 @@ func resolveSelection(cfg config, key, selection string) (string, error) {
 			return "", errors.New("no directory selected")
 		}
 		target := strings.SplitN(selection, "\t", 2)[0]
-		return target, openInEditor(target)
+		return "", openInEditor(target)
 	case "":
 		if strings.Contains(selection, "\t") {
 			return strings.SplitN(selection, "\t", 2)[0], nil
@@ -928,16 +927,22 @@ func openInEditor(target string) error {
 		return fmt.Errorf("open /dev/tty: %w", err)
 	}
 	defer tty.Close()
-	for _, fd := range []int{0, 1, 2} {
-		if err := syscall.Dup2(int(tty.Fd()), fd); err != nil {
-			return fmt.Errorf("reattach tty fd %d: %w", fd, err)
-		}
-	}
 	shell := os.Getenv("BASH")
 	if shell == "" {
 		shell = "/bin/bash"
 	}
-	return syscall.Exec(shell, []string{shell, "-lc", `exec ${VISUAL:-${EDITOR:-}} "$1"`, "sh", target}, os.Environ())
+	cmd := exec.Command(shell, "-lc", `exec ${VISUAL:-${EDITOR:-}} "$1"`, "sh", target)
+	cmd.Stdin = tty
+	cmd.Stdout = tty
+	cmd.Stderr = tty
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitCodeError{code: exitErr.ExitCode()}
+		}
+		return fmt.Errorf("open editor: %w", err)
+	}
+	return exitCodeError{code: 0}
 }
 
 func outputsShellIntegration(mode string) bool {
