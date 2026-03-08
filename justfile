@@ -16,6 +16,19 @@ build:
     go build -ldflags "-X main.version=$(cat VERSION)" -o ./.build/workspace-launcher ./cmd/workspace-launcher
     go build -o ./.build/bench-setup ./cmd/bench-setup
 
+bench root="/tmp/workspace-launcher-bench" count="1500" warmup="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just build
+    if ! command -v hyperfine >/dev/null 2>&1; then
+      printf 'hyperfine is required for just bench\n' >&2
+      exit 1
+    fi
+    ./.build/bench-setup --root "{{root}}" --count "{{count}}"
+    hyperfine --warmup "{{warmup}}" \
+      "WORKSPACE_LAUNCHER_BENCH_MODE=headless ./.build/workspace-launcher {{root}} >/dev/null" \
+      "WORKSPACE_LAUNCHER_BENCH_MODE=headless WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher {{root}} >/dev/null"
+
 run *args:
     just build
     ./.build/workspace-launcher {{args}}

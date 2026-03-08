@@ -1,5 +1,15 @@
 # Benchmarking
 
+Run the default benchmark flow end-to-end:
+
+```sh
+just bench
+```
+
+That builds the binaries, prepares the synthetic fixture under
+`/tmp/workspace-launcher-bench`, and runs the `mtime` and `git` recency
+benchmarks with `hyperfine`.
+
 Create the synthetic fixture tree:
 
 ```sh
@@ -24,6 +34,7 @@ Override the size or location:
 
 ```sh
 ./.build/bench-setup --count 2500 --root /tmp/wl-bench
+just bench /tmp/wl-bench 2500
 ```
 
 Run the launcher in built-in headless benchmark mode:

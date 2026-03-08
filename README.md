@@ -152,6 +152,7 @@ Use `just` for the common local workflows:
 ```sh
 just test
 just build
+just bench
 just run -- --query fzf ~/src
 just install
 just bump-version patch
