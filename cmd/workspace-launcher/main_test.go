@@ -375,7 +375,7 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	quotedArgsPath := "'" + strings.ReplaceAll(argsPath, "'", "'\\''") + "'"
 	fzfPath := writeTestScript(t, "#!/bin/sh\nprintf '%s\n' \"$@\" > "+quotedArgsPath+"\nexit 130\n")
 
-	result, err := pickRepo(config{}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	result, err := pickRepo(config{showRoot: true, showLanguage: true, showGit: true}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}

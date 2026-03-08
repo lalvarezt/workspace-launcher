@@ -1248,7 +1248,7 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		"--info=hidden",
 		"--delimiter=\t",
 		"--with-nth=5..",
-		"--nth=2,4",
+		"--nth=" + fzfSearchNth(cfg),
 		"--expect=ctrl-e",
 		"--query=" + cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
@@ -1284,6 +1284,25 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		return "", waitErr
 	}
 	return strings.TrimRight(stdout.String(), "\n"), nil
+}
+
+func fzfSearchNth(cfg config) string {
+	columns := make([]string, 0, 2)
+	column := 1
+	if cfg.showRoot {
+		column++
+	}
+
+	columns = append(columns, strconv.Itoa(column))
+	column++
+	if cfg.showLanguage {
+		column++
+	}
+	if cfg.showGit {
+		columns = append(columns, strconv.Itoa(column))
+	}
+
+	return strings.Join(columns, ",")
 }
 
 func pickRepoHeadless(cfg config, candidates []candidate) (string, error) {
