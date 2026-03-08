@@ -359,17 +359,15 @@ func resolveRoots(roots []string) ([]string, error) {
 	resolved := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
 	for _, root := range roots {
-		for _, part := range parseRootList(root) {
-			resolvedRoot, err := resolveRoot(part)
-			if err != nil {
-				return nil, err
-			}
-			if _, ok := seen[resolvedRoot]; ok {
-				continue
-			}
-			seen[resolvedRoot] = struct{}{}
-			resolved = append(resolved, resolvedRoot)
+		resolvedRoot, err := resolveRoot(root)
+		if err != nil {
+			return nil, err
 		}
+		if _, ok := seen[resolvedRoot]; ok {
+			continue
+		}
+		seen[resolvedRoot] = struct{}{}
+		resolved = append(resolved, resolvedRoot)
 	}
 	if len(resolved) == 0 {
 		return nil, errors.New("at least one root is required")

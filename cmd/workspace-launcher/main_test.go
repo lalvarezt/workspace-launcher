@@ -380,6 +380,26 @@ func TestParseConfigAcceptsMultipleRootArgs(t *testing.T) {
 	}
 }
 
+func TestParseConfigTreatsPositionalRootAsSinglePath(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "foo:bar")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+
+	cfg, err := parseConfig([]string{root})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	if len(cfg.roots) != 1 {
+		t.Fatalf("unexpected root count: got %d want %d", len(cfg.roots), 1)
+	}
+	if cfg.roots[0] != root {
+		t.Fatalf("unexpected root: got %q want %q", cfg.roots[0], root)
+	}
+}
+
 func TestResolveSelectionCreatesUnderFirstRoot(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
