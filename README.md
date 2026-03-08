@@ -63,8 +63,12 @@ source <(workspace-launcher --zsh)
 workspace-launcher --fish | source
 ```
 
-Each integration defines `workspace-launcher-cd` and binds `Ctrl-G` to open the
-picker and `cd` directly in the current shell session.
+Each integration defines `workspace-launcher-cd` and `workspace-launcher-widget`.
+Add `--bindings` if you also want the default `Ctrl-G` binding:
+
+```sh
+source <(workspace-launcher --bash --bindings)
+```
 
 Rebind it with normal shell commands after sourcing:
 
@@ -118,12 +122,13 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 ## CLI Options
 
 ```text
-Usage: workspace-launcher [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 ```
 
 - `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)`
 - `--zsh`: print zsh shell integration; load with `source <(workspace-launcher --zsh)`
 - `--fish`: print fish shell integration; load with `workspace-launcher --fish | source`
+- `--bindings`: add the default `Ctrl-G` bindings; only valid with `--bash`, `--zsh`, or `--fish`
 - `--query TEXT`: start with an initial query
 - `--language` / `--no-language`: show or hide the language column
 - `--git` / `--no-git`: show or hide the git-state column

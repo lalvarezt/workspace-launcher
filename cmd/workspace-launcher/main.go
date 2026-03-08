@@ -65,6 +65,7 @@ const (
 
 type config struct {
 	mode          string
+	shellBindings bool
 	initialQuery  string
 	root          string
 	jobs          int
@@ -128,7 +129,7 @@ func run() error {
 	}
 
 	if outputsShellIntegration(cfg.mode) {
-		script, err := renderShellIntegration(cfg.mode)
+		script, err := renderShellIntegration(cfg.mode, cfg.shellBindings)
 		if err != nil {
 			return err
 		}
@@ -205,6 +206,8 @@ func parseConfig(args []string) (config, error) {
 			cfg.mode = modeZsh
 		case arg == "--fish":
 			cfg.mode = modeFish
+		case arg == "--bindings":
+			cfg.shellBindings = true
 		case arg == "--query":
 			i++
 			if i >= len(args) {
@@ -253,6 +256,10 @@ func parseConfig(args []string) (config, error) {
 		return cfg, nil
 	}
 
+	if cfg.shellBindings {
+		return config{}, errors.New("--bindings can only be used with --bash, --zsh, or --fish")
+	}
+
 	resolvedRoot, err := resolveRoot(cfg.root)
 	if err != nil {
 		return config{}, err
@@ -286,7 +293,7 @@ func parseConfig(args []string) (config, error) {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
+	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT]
 
 Launch an fzf-based directory picker for directories under ROOT.
 Selecting an existing entry opens that directory; submitting a new query creates it.
@@ -295,6 +302,7 @@ Options:
   --bash           Print bash shell integration
   --zsh            Print zsh shell integration
   --fish           Print fish shell integration
+  --bindings       Include default Ctrl-G shell bindings with shell integration
   --query TEXT     Start with an initial query
   --language       Show the language column (default)
   --no-language    Hide the language column
@@ -304,8 +312,8 @@ Options:
   -h, --help       Show this help text
 
 Shell integration:
-  bash/zsh         Load with source <(workspace-launcher --bash|--zsh)
-                   or workspace-launcher --fish | source
+  bash/zsh         source <(workspace-launcher --bash|--zsh [--bindings])
+  fish             workspace-launcher --fish [--bindings] | source
 
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directory (default: ~/git-repos)
@@ -954,7 +962,7 @@ func outputsShellIntegration(mode string) bool {
 	}
 }
 
-func renderShellIntegration(mode string) (string, error) {
+func renderShellIntegration(mode string, bindings bool) (string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -962,17 +970,17 @@ func renderShellIntegration(mode string) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 		exePath = resolved
 	}
-	return renderShellIntegrationForPath(mode, exePath)
+	return renderShellIntegrationForPath(mode, exePath, bindings)
 }
 
-func renderShellIntegrationForPath(mode, binPath string) (string, error) {
+func renderShellIntegrationForPath(mode, binPath string, bindings bool) (string, error) {
 	switch mode {
 	case modeBash:
-		return shellscripts.Bash(binPath), nil
+		return shellscripts.Bash(binPath, bindings), nil
 	case modeZsh:
-		return shellscripts.Zsh(binPath), nil
+		return shellscripts.Zsh(binPath, bindings), nil
 	case modeFish:
-		return shellscripts.Fish(binPath), nil
+		return shellscripts.Fish(binPath, bindings), nil
 	default:
 		return "", fmt.Errorf("unknown shell integration mode: %s", mode)
 	}

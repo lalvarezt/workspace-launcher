@@ -23,6 +23,3 @@ function workspace-launcher-widget --description 'Open workspace-launcher and cd
     commandline -r ''
     commandline -f repaint
 end
-
-bind \cg workspace-launcher-widget
-bind -M insert \cg workspace-launcher-widget
