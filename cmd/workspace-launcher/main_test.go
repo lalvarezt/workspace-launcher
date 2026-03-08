@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -357,6 +358,41 @@ func TestPickRepoHeadlessMatchesBranchField(t *testing.T) {
 	}
 }
 
+func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
+	fzfPath := writeTestScript(t, "#!/bin/sh\nexit 130\n")
+
+	result, err := pickRepo(config{}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	if err != nil {
+		t.Fatalf("pickRepo returned error: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected empty result on abort, got %q", result)
+	}
+}
+
+func TestRunReturnsZeroWhenPickerClosesWithoutSelection(t *testing.T) {
+	root := t.TempDir()
+	makeDir(t, filepath.Join(root, "repo"), 1700001000, "")
+
+	t.Setenv("FZF_BIN", writeTestScript(t, "#!/bin/sh\nexit 130\n"))
+	t.Setenv("COLUMNS", "80")
+
+	origArgs := os.Args
+	defer func() {
+		os.Args = origArgs
+	}()
+	os.Args = []string{"workspace-launcher", root}
+
+	err := run()
+	var exitErr exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exitCodeError, got %v", err)
+	}
+	if exitErr.code != 0 {
+		t.Fatalf("unexpected exit code: got %d want 0", exitErr.code)
+	}
+}
+
 func TestBuildRootLabelsUsesShortestUniqueSuffix(t *testing.T) {
 	roots := []string{
 		filepath.Join(string(filepath.Separator), "mnt", "a", "src"),
@@ -657,14 +693,14 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 
 func TestRenderGitFieldUsesGitIcon(t *testing.T) {
 	field := renderGitField(gitMeta{present: true}, "main", 12)
-	if !strings.Contains(field, "") || !strings.Contains(field, "main") {
+	if !strings.Contains(field, "  main") {
 		t.Fatalf("unexpected git field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesWorktreeIcon(t *testing.T) {
 	field := renderGitField(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui", 24)
-	if !strings.Contains(field, "󰙅") || !strings.Contains(field, "feature/worktree-ui") {
+	if !strings.Contains(field, "󰙅  feature/worktree-ui") {
 		t.Fatalf("unexpected worktree field: %q", field)
 	}
 }
@@ -731,8 +767,8 @@ func TestComputeGitColumnWidthUsesObservedContent(t *testing.T) {
 		{git: gitMeta{present: true}, matchText: "a"},
 		{git: gitMeta{present: true, isWorktree: true, branchLabel: "feature/demo"}},
 	})
-	if width != displayWidth("󰙅 feature/demo") {
-		t.Fatalf("unexpected git width: got %d want %d", width, displayWidth("󰙅 feature/demo"))
+	if width != displayWidth("󰙅  feature/demo") {
+		t.Fatalf("unexpected git width: got %d want %d", width, displayWidth("󰙅  feature/demo"))
 	}
 }
 
@@ -872,4 +908,13 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v in %s failed: %v\n%s", args, dir, err, output)
 	}
 	return string(output)
+}
+
+func writeTestScript(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test-script.sh")
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write test script: %v", err)
+	}
+	return path
 }

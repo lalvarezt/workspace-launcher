@@ -205,7 +205,7 @@ func run() error {
 		return err
 	}
 	if result == "" {
-		return exitCodeError{code: 1}
+		return exitCodeError{code: 0}
 	}
 
 	key, selection := splitResult(result)
@@ -1277,8 +1277,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 	}
 	if waitErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", exitCodeError{code: 1}
+		if errors.As(waitErr, &exitErr) && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 130) {
+			return "", nil
 		}
 		return "", waitErr
 	}
@@ -1566,7 +1566,7 @@ func gitFieldText(meta gitMeta, branch string) string {
 
 	text := icon
 	if branch != "" && branch != "-" {
-		text += " " + branch
+		text += "  " + branch
 	}
 	return text
 }
