@@ -177,13 +177,13 @@ func TestBuildCandidatesIncludesAllRoots(t *testing.T) {
 	makeDir(t, filepath.Join(rootB, "beta"), 1700002000, "")
 
 	cfg := config{
-		roots:        []string{rootA, rootB},
-		jobs:         2,
-		recency:      recencyMtime,
-		showLanguage: false,
-		showGit:      false,
-		now:          1700003000,
-		nameWidth:    32,
+		roots:      []string{rootA, rootB},
+		rootLabels: map[string]string{rootA: "alpha-root", rootB: "beta-root"},
+		showRoot:   true,
+		jobs:       2,
+		recency:    recencyMtime,
+		now:        1700003000,
+		nameWidth:  32,
 	}
 
 	cands, err := buildCandidates(cfg)
@@ -207,8 +207,8 @@ func TestBuildCandidatesIncludesAllRoots(t *testing.T) {
 func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	cfg := config{headlessBench: true}
 	candidates := []candidate{
-		{path: "/tmp/b", display: "beta"},
-		{path: "/tmp/a", display: "alpha"},
+		{path: "/tmp/b", display: "beta", matchText: "beta"},
+		{path: "/tmp/a", display: "alpha", matchText: "alpha"},
 	}
 
 	got, err := pickRepoHeadless(cfg, candidates)
@@ -223,8 +223,8 @@ func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	cfg := config{headlessBench: true, initialQuery: "alp"}
 	candidates := []candidate{
-		{path: "/tmp/b", display: "beta"},
-		{path: "/tmp/a", display: "alpha"},
+		{path: "/tmp/b", display: "beta", matchText: "beta"},
+		{path: "/tmp/a", display: "alpha", matchText: "alpha"},
 	}
 
 	got, err := pickRepoHeadless(cfg, candidates)
@@ -233,6 +233,122 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	}
 	if got != "/tmp/a\talpha" {
 		t.Fatalf("unexpected filtered selection: %q", got)
+	}
+}
+
+func TestPickRepoHeadlessOnlyMatchesNameField(t *testing.T) {
+	cfg := config{headlessBench: true, initialQuery: "archive"}
+	candidates := []candidate{
+		{path: "/tmp/archive/api", display: "archive\tapi", matchText: "api"},
+	}
+
+	_, err := pickRepoHeadless(cfg, candidates)
+	if err == nil {
+		t.Fatal("expected query against root column to miss")
+	}
+}
+
+func TestBuildRootLabelsUsesShortestUniqueSuffix(t *testing.T) {
+	roots := []string{
+		filepath.Join(string(filepath.Separator), "mnt", "a", "src"),
+		filepath.Join(string(filepath.Separator), "mnt", "b", "src"),
+		filepath.Join(string(filepath.Separator), "mnt", "archive"),
+	}
+
+	got := buildRootLabels(roots)
+
+	if got[roots[0]] != filepath.Join("a", "src") {
+		t.Fatalf("unexpected label for first root: %q", got[roots[0]])
+	}
+	if got[roots[1]] != filepath.Join("b", "src") {
+		t.Fatalf("unexpected label for second root: %q", got[roots[1]])
+	}
+	if got[roots[2]] != "archive" {
+		t.Fatalf("unexpected label for third root: %q", got[roots[2]])
+	}
+}
+
+func TestDescribeRepoIncludesRootFieldWhenMultiRoot(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	repoA := filepath.Join(rootA, "api")
+	repoB := filepath.Join(rootB, "api")
+	makeDir(t, repoA, 1700001000, "")
+	makeDir(t, repoB, 1700002000, "")
+
+	cfg := config{
+		showRoot:       true,
+		showLanguage:   false,
+		showGit:        false,
+		now:            1700003000,
+		nameWidth:      20,
+		rootLabelWidth: 12,
+	}
+
+	candA, err := describeRepo(cfg, childDir{
+		name:      "api",
+		path:      repoA,
+		root:      rootA,
+		rootLabel: "src",
+		modEpoch:  1700001000,
+	}, false)
+	if err != nil {
+		t.Fatalf("describeRepo returned error: %v", err)
+	}
+	candB, err := describeRepo(cfg, childDir{
+		name:      "api",
+		path:      repoB,
+		root:      rootB,
+		rootLabel: "archive",
+		modEpoch:  1700002000,
+	}, false)
+	if err != nil {
+		t.Fatalf("describeRepo returned error: %v", err)
+	}
+
+	fieldsA := strings.Split(candA.display, "\t")
+	fieldsB := strings.Split(candB.display, "\t")
+	if len(fieldsA) != 3 || len(fieldsB) != 3 {
+		t.Fatalf("unexpected field count: got %d and %d want 3", len(fieldsA), len(fieldsB))
+	}
+	if !strings.Contains(fieldsA[0], "src") || !strings.Contains(fieldsB[0], "archive") {
+		t.Fatalf("unexpected root fields: %q %q", fieldsA[0], fieldsB[0])
+	}
+	if !strings.Contains(fieldsA[1], "api") || !strings.Contains(fieldsB[1], "api") {
+		t.Fatalf("unexpected name fields: %q %q", fieldsA[1], fieldsB[1])
+	}
+	if fieldsA[0] == fieldsB[0] {
+		t.Fatalf("expected distinct root fields, got %q", fieldsA[0])
+	}
+}
+
+func TestDescribeRepoOmitsRootFieldWhenSingleRoot(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "api")
+	makeDir(t, repo, 1700001000, "")
+
+	cfg := config{
+		showRoot:     false,
+		showLanguage: false,
+		showGit:      false,
+		now:          1700003000,
+		nameWidth:    20,
+	}
+
+	cand, err := describeRepo(cfg, childDir{
+		name:     "api",
+		path:     repo,
+		modEpoch: 1700001000,
+	}, false)
+	if err != nil {
+		t.Fatalf("describeRepo returned error: %v", err)
+	}
+
+	fields := strings.Split(cand.display, "\t")
+	if len(fields) != 2 {
+		t.Fatalf("unexpected field count: got %d want %d", len(fields), 2)
+	}
+	if !strings.Contains(fields[0], "api") {
+		t.Fatalf("unexpected first visible field: %q", fields[0])
 	}
 }
 
@@ -397,6 +513,39 @@ func TestParseConfigTreatsPositionalRootAsSinglePath(t *testing.T) {
 	}
 	if cfg.roots[0] != root {
 		t.Fatalf("unexpected root: got %q want %q", cfg.roots[0], root)
+	}
+}
+
+func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
+	rootA := filepath.Join(t.TempDir(), "src")
+	rootB := filepath.Join(t.TempDir(), "archive")
+	if err := os.MkdirAll(rootA, 0o755); err != nil {
+		t.Fatalf("mkdir rootA: %v", err)
+	}
+	if err := os.MkdirAll(rootB, 0o755); err != nil {
+		t.Fatalf("mkdir rootB: %v", err)
+	}
+	t.Setenv("COLUMNS", "40")
+
+	cfg, err := parseConfig([]string{rootA, rootB})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	if !cfg.showRoot {
+		t.Fatal("expected root column to be enabled")
+	}
+	if cfg.searchFieldIndex != 2 {
+		t.Fatalf("unexpected searchFieldIndex: got %d want %d", cfg.searchFieldIndex, 2)
+	}
+	if cfg.nameWidth < 16 {
+		t.Fatalf("expected nameWidth >= 16, got %d", cfg.nameWidth)
+	}
+	if cfg.rootLabelWidth < rootFloorWidth || cfg.rootLabelWidth > rootMaxWidth {
+		t.Fatalf("unexpected rootLabelWidth: %d", cfg.rootLabelWidth)
+	}
+	if cfg.rootLabels[rootA] != "src" || cfg.rootLabels[rootB] != "archive" {
+		t.Fatalf("unexpected root labels: %v", cfg.rootLabels)
 	}
 }
 

@@ -89,6 +89,10 @@ Search across several roots:
 workspace-launcher ~/src ~/.config
 ```
 
+When multiple roots are configured, the picker shows a left-side root context
+column to disambiguate duplicate workspace names. Filtering still matches the
+workspace-name column only.
+
 Seed the query:
 
 ```sh
@@ -229,6 +233,8 @@ go run ./cmd/bench-setup
 ## Notes
 
 - The launcher only scans the direct children of the selected roots.
+- When multiple roots are configured, the picker shows the shortest unique root label on the left.
+- Multi-root filtering only matches workspace names, not the root-context column.
 - When multiple roots are configured, `Ctrl-N` creates a new directory under the first root.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
