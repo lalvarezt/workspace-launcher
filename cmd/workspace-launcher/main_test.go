@@ -547,23 +547,24 @@ func TestDescribeRepoOmitsRootFieldWhenSingleRoot(t *testing.T) {
 	}
 }
 
-func TestSplitResultTreatsEmptyExpectLineAsNoKey(t *testing.T) {
-	key, selection := splitResult("\n/tmp/fzf\tentry")
-	if key != "" {
-		t.Fatalf("unexpected key: %q", key)
-	}
-	if selection != "/tmp/fzf\tentry" {
-		t.Fatalf("unexpected selection: %q", selection)
+func TestParsePickerResultSelectionOnlyLegacy(t *testing.T) {
+	got := parsePickerResult("/tmp/fzf\tentry")
+	if got.query != "" || got.key != "" || got.selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected parsed result: %+v", got)
 	}
 }
 
-func TestSplitResultSeparatesExpectedKey(t *testing.T) {
-	key, selection := splitResult("ctrl-e\n/tmp/fzf\tentry")
-	if key != "ctrl-e" {
-		t.Fatalf("unexpected key: %q", key)
+func TestParsePickerResultWithQueryAndEmptyKey(t *testing.T) {
+	got := parsePickerResult("repo\n\n/tmp/fzf\tentry")
+	if got.query != "repo" || got.key != "" || got.selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected parsed result: %+v", got)
 	}
-	if selection != "/tmp/fzf\tentry" {
-		t.Fatalf("unexpected selection: %q", selection)
+}
+
+func TestParsePickerResultSeparatesExpectedKey(t *testing.T) {
+	got := parsePickerResult("new-workspace\nctrl-n\n/tmp/fzf\tentry")
+	if got.query != "new-workspace" || got.key != "ctrl-n" || got.selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected parsed result: %+v", got)
 	}
 }
 
@@ -840,12 +841,59 @@ func TestDisplayWidthTreatsAccentedLatinAsSingleWidth(t *testing.T) {
 	}
 }
 
-func TestResolveSelectionCreatesUnderFirstRoot(t *testing.T) {
+func TestResolveSelectionCreatesUnderSingleRootWithoutSelection(t *testing.T) {
+	root := t.TempDir()
+	cfg := config{roots: []string{root}}
+
+	target, err := resolveSelection(cfg, pickerResult{query: "new-workspace"})
+	if err != nil {
+		t.Fatalf("resolveSelection returned error: %v", err)
+	}
+
+	want := filepath.Join(root, "new-workspace")
+	if target != want {
+		t.Fatalf("unexpected target: got %q want %q", target, want)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected target directory to exist: %v", err)
+	}
+}
+
+func TestResolveSelectionCreatesUnderSelectedRootForCtrlN(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 	cfg := config{roots: []string{rootA, rootB}}
 
-	target, err := resolveSelection(cfg, "", "new-workspace")
+	selected := serializeCandidate(candidate{
+		path:      filepath.Join(rootB, "existing"),
+		display:   "existing",
+		matchText: "existing",
+	})
+
+	target, err := resolveSelection(cfg, pickerResult{
+		query:     "new-workspace",
+		key:       "ctrl-n",
+		selection: selected,
+	})
+	if err != nil {
+		t.Fatalf("resolveSelection returned error: %v", err)
+	}
+
+	want := filepath.Join(rootB, "new-workspace")
+	if target != want {
+		t.Fatalf("unexpected target: got %q want %q", target, want)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected target directory to exist: %v", err)
+	}
+}
+
+func TestResolveSelectionFallsBackToFirstRootForCtrlNWithoutSelection(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	cfg := config{roots: []string{rootA, rootB}}
+
+	target, err := resolveSelection(cfg, pickerResult{query: "new-workspace", key: "ctrl-n"})
 	if err != nil {
 		t.Fatalf("resolveSelection returned error: %v", err)
 	}

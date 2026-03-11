@@ -117,6 +117,12 @@ type candidate struct {
 	epoch      int64
 }
 
+type pickerResult struct {
+	query     string
+	key       string
+	selection string
+}
+
 type repoDetails struct {
 	child     childDir
 	lang      string
@@ -215,8 +221,7 @@ func run() error {
 		return exitCodeError{code: 0}
 	}
 
-	key, selection := splitResult(result)
-	target, err := resolveSelection(cfg, key, selection)
+	target, err := resolveSelection(cfg, parsePickerResult(result))
 	if err != nil {
 		return err
 	}
@@ -360,6 +365,8 @@ func printUsage() {
 
 Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
+In multi-root mode, Ctrl-N creates under the highlighted entry's root. Without a
+highlighted entry, creation falls back to the first configured root.
 
 Options:
   --bash           Print bash shell integration
@@ -1303,10 +1310,10 @@ func baseFzfArgs(cfg config) []string {
 		"--delimiter=\t",
 		"--with-nth=5..",
 		"--nth=" + fzfSearchNth(cfg),
-		"--expect=ctrl-e",
+		"--print-query",
+		"--expect=ctrl-e,ctrl-n",
 		"--query=" + cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
-		"--bind=ctrl-n:print-query+accept",
 	}
 }
 
@@ -1432,37 +1439,104 @@ func branchSearchText(branch string) string {
 	return branch
 }
 
-func splitResult(result string) (string, string) {
-	parts := strings.SplitN(result, "\n", 2)
-	if len(parts) == 2 && (parts[0] == "" || strings.HasPrefix(parts[0], "ctrl-")) {
-		return parts[0], parts[1]
+func parsePickerResult(result string) pickerResult {
+	result = strings.TrimRight(result, "\n")
+	if result == "" {
+		return pickerResult{}
 	}
-	return "", result
+
+	lines := strings.Split(result, "\n")
+	if len(lines) == 1 {
+		if strings.Contains(lines[0], "\t") {
+			return pickerResult{selection: lines[0]}
+		}
+		return pickerResult{query: lines[0]}
+	}
+
+	parsed := pickerResult{query: lines[0]}
+	lines = lines[1:]
+	if len(lines) == 0 {
+		return parsed
+	}
+	if lines[0] == "" || isPickerKey(lines[0]) {
+		parsed.key = lines[0]
+		lines = lines[1:]
+	}
+	if len(lines) > 0 {
+		parsed.selection = lines[0]
+	}
+	return parsed
 }
 
-func resolveSelection(cfg config, key, selection string) (string, error) {
+func isPickerKey(key string) bool {
 	switch key {
+	case "ctrl-e", "ctrl-n":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveSelection(cfg config, result pickerResult) (string, error) {
+	switch result.key {
 	case "ctrl-e":
-		if !strings.Contains(selection, "\t") {
+		target, ok := selectedPath(result.selection)
+		if !ok {
 			return "", errors.New("no directory selected")
 		}
-		target := strings.SplitN(selection, "\t", 2)[0]
 		return "", openInEditor(target)
+	case "ctrl-n":
+		return createWorkspace(cfg, result.query, result.selection)
 	case "":
-		if strings.Contains(selection, "\t") {
-			return strings.SplitN(selection, "\t", 2)[0], nil
+		if target, ok := selectedPath(result.selection); ok {
+			return target, nil
 		}
-		if err := validateNewName(selection); err != nil {
-			return "", err
+		name := result.query
+		if name == "" {
+			name = result.selection
 		}
-		target := filepath.Join(cfg.roots[0], selection)
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return "", err
-		}
-		return target, nil
+		return createWorkspace(cfg, name, "")
 	default:
-		return "", fmt.Errorf("unknown key: %s", key)
+		return "", fmt.Errorf("unknown key: %s", result.key)
 	}
+}
+
+func selectedPath(selection string) (string, bool) {
+	if !strings.Contains(selection, "\t") {
+		return "", false
+	}
+	return strings.SplitN(selection, "\t", 2)[0], true
+}
+
+func createWorkspace(cfg config, name, selection string) (string, error) {
+	if err := validateNewName(name); err != nil {
+		return "", err
+	}
+
+	root, err := resolveCreateRoot(cfg, selection)
+	if err != nil {
+		return "", err
+	}
+
+	target := filepath.Join(root, name)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func resolveCreateRoot(cfg config, selection string) (string, error) {
+	if target, ok := selectedPath(selection); ok {
+		root := filepath.Dir(target)
+		for _, configuredRoot := range cfg.roots {
+			if root == configuredRoot {
+				return configuredRoot, nil
+			}
+		}
+		return "", errors.New("selected directory is outside the configured roots")
+	}
+
+	return cfg.roots[0], nil
 }
 
 func validateNewName(name string) error {

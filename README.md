@@ -260,7 +260,7 @@ go run ./cmd/bench-setup
 - The launcher only scans the direct children of the selected roots.
 - When multiple roots are configured, the picker shows the shortest unique root label on the left.
 - Multi-root filtering only matches workspace names, not the root-context column.
-- When multiple roots are configured, `Ctrl-N` creates a new directory under the first root.
+- When multiple roots are configured, `Ctrl-N` creates under the highlighted entry's root, or falls back to the first root when no entry is highlighted.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
 
