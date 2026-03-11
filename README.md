@@ -138,10 +138,25 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 - `Ctrl-E`: open the selected directory in `$VISUAL` or `$EDITOR`
 - `Esc`: quit
 
+## Picker Styling
+
+`workspace-launcher` supports three picker style modes:
+
+- `full` (default): current launcher styling, including custom `fzf` chrome, palette, and ANSI-colored rows
+- `minimal`: keeps the custom chrome and ANSI-colored rows, but drops the custom `fzf` color palette
+- `plain`: removes the custom `fzf` chrome and ANSI row colors for a fully plain picker
+
+Examples:
+
+```sh
+workspace-launcher --fzf-style=minimal
+workspace-launcher --fzf-style=plain --no-language --no-git ~/.config
+```
+
 ## CLI Options
 
 ```text
-Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
+Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
 ```
 
 - `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)`
@@ -149,6 +164,7 @@ Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[
 - `--fish`: print fish shell integration; load with `workspace-launcher --fish | source`
 - `--bindings`: add the default `Ctrl-G` bindings; only valid with `--bash`, `--zsh`, or `--fish`
 - `--query TEXT`: start with an initial query
+- `--fzf-style STYLE`: picker style: `full` (default), `minimal`, or `plain`
 - `--language` / `--no-language`: show or hide the language column
 - `--git` / `--no-git`: show or hide the git metadata column
 - `-h` / `--help`: show help text

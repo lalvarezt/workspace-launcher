@@ -37,6 +37,10 @@ const (
 
 	recencyMtime = "mtime"
 	recencyGit   = "git"
+
+	fzfStyleFull    = "full"
+	fzfStyleMinimal = "minimal"
+	fzfStylePlain   = "plain"
 )
 
 const (
@@ -79,6 +83,7 @@ type config struct {
 	mode           string
 	shellBindings  bool
 	initialQuery   string
+	fzfStyle       string
 	roots          []string
 	rootLabels     map[string]string
 	jobs           int
@@ -229,6 +234,7 @@ func parseConfig(args []string) (config, error) {
 	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", maxJobs), maxJobs)
 	cfg := config{
 		mode:          modePath,
+		fzfStyle:      fzfStyleFull,
 		roots:         roots,
 		jobs:          jobs,
 		gitDirty:      os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
@@ -262,6 +268,22 @@ func parseConfig(args []string) (config, error) {
 			cfg.initialQuery = args[i]
 		case strings.HasPrefix(arg, "--query="):
 			cfg.initialQuery = strings.TrimPrefix(arg, "--query=")
+		case arg == "--fzf-style":
+			i++
+			if i >= len(args) {
+				return config{}, errors.New("missing value for --fzf-style")
+			}
+			style, err := parseFzfStyle(args[i])
+			if err != nil {
+				return config{}, err
+			}
+			cfg.fzfStyle = style
+		case strings.HasPrefix(arg, "--fzf-style="):
+			style, err := parseFzfStyle(strings.TrimPrefix(arg, "--fzf-style="))
+			if err != nil {
+				return config{}, err
+			}
+			cfg.fzfStyle = style
 		case arg == "--language":
 			cfg.showLanguage = true
 		case arg == "--no-language":
@@ -334,7 +356,7 @@ func parseConfig(args []string) (config, error) {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
+	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
 
 Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
@@ -345,6 +367,8 @@ Options:
   --fish           Print fish shell integration
   --bindings       Include default Ctrl-G shell bindings with shell integration
   --query TEXT     Start with an initial query
+  --fzf-style STYLE
+                   Picker style: full (default), minimal, or plain
   --language       Show the language column (default)
   --no-language    Hide the language column
   --git            Show the git metadata column (default)
@@ -364,6 +388,15 @@ Environment:
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
   WORKSPACE_LAUNCHER_SHOW_GIT       Show the git metadata column when set to 1 (default: 1)
 `, filepath.Base(os.Args[0]))
+}
+
+func parseFzfStyle(style string) (string, error) {
+	switch style {
+	case fzfStyleFull, fzfStyleMinimal, fzfStylePlain:
+		return style, nil
+	default:
+		return "", fmt.Errorf("invalid value for --fzf-style: %s", style)
+	}
 }
 
 func resolveRoot(root string) (string, error) {
@@ -549,29 +582,30 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 	applyLayoutWidths(&cfg)
 
 	out := make([]candidate, len(details))
+	styled := effectiveFzfStyle(cfg.fzfStyle) != fzfStylePlain
 	for i, detail := range details {
 		branch := detail.git.branchLabel
 		if branch == "" {
 			branch = "-"
 		}
 
-		markerField := paintField(cDim, " ")
+		markerField := paintFieldStyled(styled, cDim, " ")
 		if isCurrentRepo(cfg.cwd, detail.child.path) {
-			markerField = paintField(cCurrent, "*")
+			markerField = paintFieldStyled(styled, cCurrent, "*")
 		}
-		nameField := markerField + " " + paintField(cName, fitField(detail.child.name, cfg.nameWidth))
-		ageField := paintField(cTime, fitField(formatAge(cfg.now, detail.epoch), ageWidth))
+		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
+		ageField := paintFieldStyled(styled, cTime, fitField(formatAge(cfg.now, detail.epoch), ageWidth))
 
 		fields := make([]string, 0, 4)
 		if cfg.showRoot {
-			fields = append(fields, paintField(cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
+			fields = append(fields, paintFieldStyled(styled, cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
 		}
 		fields = append(fields, nameField)
 		if cfg.showLanguage {
-			fields = append(fields, renderLangField(detail.lang))
+			fields = append(fields, renderLangFieldStyled(detail.lang, styled))
 		}
 		if cfg.showGit {
-			fields = append(fields, renderGitField(detail.git, branch, cfg.gitColumnWidth))
+			fields = append(fields, renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
 		}
 		fields = append(fields, ageField)
 
@@ -1227,35 +1261,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		return pickRepoHeadless(cfg, candidates)
 	}
 
-	args := []string{
-		"--ansi",
-		"--scheme=history",
-		"--layout=reverse",
-		"--tabstop=1",
-		"--prompt=",
-		"--pointer=▌",
-		"--color=bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2",
-		"--color=hl:#e0a65b,hl+:#ffd08a,prompt:#8ecfd0,query:#f6efe2,ghost:#6d7d88",
-		"--color=border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6",
-		"--color=input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f",
-		"--color=pointer:#efbf7a,separator:#36434d,scrollbar:#55636e",
-		"--ghost=Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create",
-		"--input-border",
-		"--input-label= Search/New ",
-		"--list-border",
-		"--list-label= Folders ",
-		"--footer=Enter open | Ctrl-E edit | Ctrl-N create | Esc quit",
-		"--footer-border=line",
-		"--info=hidden",
-		"--delimiter=\t",
-		"--with-nth=5..",
-		"--nth=" + fzfSearchNth(cfg),
-		"--expect=ctrl-e",
-		"--query=" + cfg.initialQuery,
-		"--bind=enter:accept-or-print-query",
-		"--bind=ctrl-n:print-query+accept",
-		"--bind=result:transform-list-label:printf \" Folders (%s) \" \"$FZF_MATCH_COUNT\"",
-	}
+	args := baseFzfArgs(cfg)
+	args = append(args, fzfStyleArgs(cfg.fzfStyle)...)
 	cmd := exec.Command(fzfPath, args...)
 
 	stdin, err := cmd.StdinPipe()
@@ -1285,6 +1292,71 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		return "", waitErr
 	}
 	return strings.TrimRight(stdout.String(), "\n"), nil
+}
+
+func baseFzfArgs(cfg config) []string {
+	return []string{
+		"--scheme=history",
+		"--layout=reverse",
+		"--tabstop=1",
+		"--info=hidden",
+		"--delimiter=\t",
+		"--with-nth=5..",
+		"--nth=" + fzfSearchNth(cfg),
+		"--expect=ctrl-e",
+		"--query=" + cfg.initialQuery,
+		"--bind=enter:accept-or-print-query",
+		"--bind=ctrl-n:print-query+accept",
+	}
+}
+
+func fzfStyleArgs(style string) []string {
+	switch effectiveFzfStyle(style) {
+	case fzfStyleFull:
+		return []string{
+			"--ansi",
+			"--prompt=",
+			"--pointer=▌",
+			"--color=bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2",
+			"--color=hl:#e0a65b,hl+:#ffd08a,prompt:#8ecfd0,query:#f6efe2,ghost:#6d7d88",
+			"--color=border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6",
+			"--color=input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f",
+			"--color=pointer:#efbf7a,separator:#36434d,scrollbar:#55636e",
+			"--ghost=Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create",
+			"--input-border",
+			"--input-label= Search/New ",
+			"--list-border",
+			"--list-label= Folders ",
+			"--footer=Enter open | Ctrl-E edit | Ctrl-N create | Esc quit",
+			"--footer-border=line",
+			"--bind=result:transform-list-label:printf \" Folders (%s) \" \"$FZF_MATCH_COUNT\"",
+		}
+	case fzfStyleMinimal:
+		return []string{
+			"--ansi",
+			"--prompt=",
+			"--pointer=▌",
+			"--ghost=Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create",
+			"--input-border",
+			"--input-label= Search/New ",
+			"--list-border",
+			"--list-label= Folders ",
+			"--footer=Enter open | Ctrl-E edit | Ctrl-N create | Esc quit",
+			"--footer-border=line",
+			"--bind=result:transform-list-label:printf \" Folders (%s) \" \"$FZF_MATCH_COUNT\"",
+		}
+	case fzfStylePlain:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func effectiveFzfStyle(style string) string {
+	if style == "" {
+		return fzfStyleFull
+	}
+	return style
 }
 
 func fzfSearchNth(cfg config) string {
@@ -1579,10 +1651,21 @@ func trimDisplayWidth(text string, maxWidth int) string {
 }
 
 func paintField(color, text string) string {
+	return paintFieldStyled(true, color, text)
+}
+
+func paintFieldStyled(styled bool, color, text string) string {
+	if !styled {
+		return text
+	}
 	return color + text + cReset
 }
 
 func renderLangField(lang string) string {
+	return renderLangFieldStyled(lang, true)
+}
+
+func renderLangFieldStyled(lang string, styled bool) string {
 	icon := "•"
 	label := "Misc"
 	color := cMisc
@@ -1608,7 +1691,7 @@ func renderLangField(lang string) string {
 	if icon == "•" {
 		iconCell = "•  "
 	}
-	return paintField(color, iconCell+fitField(label, langLabelWidth))
+	return paintFieldStyled(styled, color, iconCell+fitField(label, langLabelWidth))
 }
 
 func gitFieldText(meta gitMeta, branch string) string {
@@ -1634,8 +1717,12 @@ func gitFieldText(meta gitMeta, branch string) string {
 }
 
 func renderGitField(meta gitMeta, branch string, width int) string {
+	return renderGitFieldStyled(meta, branch, width, true)
+}
+
+func renderGitFieldStyled(meta gitMeta, branch string, width int, styled bool) string {
 	if !meta.present {
-		return paintField(cDim, fitField("-", width))
+		return paintFieldStyled(styled, cDim, fitField("-", width))
 	}
 
 	color := cGit
@@ -1651,7 +1738,7 @@ func renderGitField(meta gitMeta, branch string, width int) string {
 		color = cGitDirty
 	}
 
-	return paintField(color, fitField(gitFieldText(meta, branch), width))
+	return paintFieldStyled(styled, color, fitField(gitFieldText(meta, branch), width))
 }
 
 func expandHome(path string) string {
