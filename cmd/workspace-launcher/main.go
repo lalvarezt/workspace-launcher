@@ -51,7 +51,7 @@ const (
 	gitMaxWidth    = 48
 	nameMinWidth   = 16
 	ageWidth       = 12
-	chromeWidth    = 18
+	chromeWidth    = 10
 )
 
 const (
@@ -1551,7 +1551,7 @@ func runeDisplayWidth(r rune) int {
 	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
 		return 0
 	case unicode.In(r, unicode.Co):
-		return 2
+		return 1
 	default:
 		kind := width.LookupRune(r).Kind()
 		if kind == width.EastAsianWide || kind == width.EastAsianFullwidth {
