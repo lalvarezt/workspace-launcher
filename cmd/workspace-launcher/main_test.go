@@ -310,8 +310,8 @@ func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/b\tbeta\t\t\tbeta" {
-		t.Fatalf("unexpected selection: %q", got)
+	if got.selection != "/tmp/b\tbeta\t\t\tbeta" {
+		t.Fatalf("unexpected selection: %q", got.selection)
 	}
 }
 
@@ -326,8 +326,8 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/a\talpha\t\t\talpha" {
-		t.Fatalf("unexpected filtered selection: %q", got)
+	if got.selection != "/tmp/a\talpha\t\t\talpha" {
+		t.Fatalf("unexpected filtered selection: %q", got.selection)
 	}
 }
 
@@ -353,8 +353,8 @@ func TestPickRepoHeadlessMatchesBranchField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/repo\trepo\t\tfeature/worktree-ui\trepo" {
-		t.Fatalf("unexpected branch selection: %q", got)
+	if got.selection != "/tmp/repo\trepo\t\tfeature/worktree-ui\trepo" {
+		t.Fatalf("unexpected branch selection: %q", got.selection)
 	}
 }
 
@@ -365,8 +365,8 @@ func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}
-	if result != "" {
-		t.Fatalf("expected empty result on abort, got %q", result)
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on abort, got %+v", result)
 	}
 }
 
@@ -374,13 +374,24 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	quotedArgsPath := "'" + strings.ReplaceAll(argsPath, "'", "'\\''") + "'"
 	fzfPath := writeTestScript(t, "#!/bin/sh\nprintf '%s\n' \"$@\" > "+quotedArgsPath+"\nexit 130\n")
+	rootA := t.TempDir()
+	rootB := t.TempDir()
 
-	result, err := pickRepo(config{showRoot: true, showLanguage: true, showGit: true}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	result, err := pickRepo(config{
+		showRoot:     true,
+		showLanguage: true,
+		showGit:      true,
+		roots:        []string{rootA, rootB},
+		rootLabels: map[string]string{
+			rootA: "a/src",
+			rootB: "b/src",
+		},
+	}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}
-	if result != "" {
-		t.Fatalf("expected empty result on abort, got %q", result)
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on abort, got %+v", result)
 	}
 
 	args, err := os.ReadFile(argsPath)
@@ -395,6 +406,12 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	}
 	if !strings.Contains(string(args), "--nth=2,4\n") {
 		t.Fatalf("expected --nth=2,4 in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), "--bind=ctrl-r:execute-silent(") {
+		t.Fatalf("expected ctrl-r root switch binding in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), "--footer=Enter open | Ctrl-E edit | Ctrl-N create | Ctrl-R root [a/src] | Esc quit\n") {
+		t.Fatalf("expected multi-root footer in fzf args, got %q", string(args))
 	}
 }
 
@@ -415,8 +432,8 @@ func TestPickRepoIgnoresBrokenPipeOnAbortExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}
-	if result != "" {
-		t.Fatalf("expected empty result on abort, got %q", result)
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on abort, got %+v", result)
 	}
 }
 
@@ -859,7 +876,7 @@ func TestResolveSelectionCreatesUnderSingleRootWithoutSelection(t *testing.T) {
 	}
 }
 
-func TestResolveSelectionCreatesUnderSelectedRootForCtrlN(t *testing.T) {
+func TestResolveSelectionUsesCurrentCreateRootForCtrlNEvenWithSelection(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 	cfg := config{roots: []string{rootA, rootB}}
@@ -871,15 +888,16 @@ func TestResolveSelectionCreatesUnderSelectedRootForCtrlN(t *testing.T) {
 	})
 
 	target, err := resolveSelection(cfg, pickerResult{
-		query:     "new-workspace",
-		key:       "ctrl-n",
-		selection: selected,
+		query:      "new-workspace",
+		key:        "ctrl-n",
+		selection:  selected,
+		createRoot: rootA,
 	})
 	if err != nil {
 		t.Fatalf("resolveSelection returned error: %v", err)
 	}
 
-	want := filepath.Join(rootB, "new-workspace")
+	want := filepath.Join(rootA, "new-workspace")
 	if target != want {
 		t.Fatalf("unexpected target: got %q want %q", target, want)
 	}
@@ -888,17 +906,35 @@ func TestResolveSelectionCreatesUnderSelectedRootForCtrlN(t *testing.T) {
 	}
 }
 
-func TestResolveSelectionFallsBackToFirstRootForCtrlNWithoutSelection(t *testing.T) {
+func TestResolveSelectionErrorsWithoutActiveCreateRootForCtrlN(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 	cfg := config{roots: []string{rootA, rootB}}
 
-	target, err := resolveSelection(cfg, pickerResult{query: "new-workspace", key: "ctrl-n"})
+	_, err := resolveSelection(cfg, pickerResult{query: "new-workspace", key: "ctrl-n"})
+	if err == nil {
+		t.Fatal("expected resolveSelection to fail without an active create root")
+	}
+	if !strings.Contains(err.Error(), "no active create root selected") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveSelectionUsesCurrentCreateRootForCtrlNWithoutSelection(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	cfg := config{roots: []string{rootA, rootB}}
+
+	target, err := resolveSelection(cfg, pickerResult{
+		query:      "new-workspace",
+		key:        "ctrl-n",
+		createRoot: rootB,
+	})
 	if err != nil {
 		t.Fatalf("resolveSelection returned error: %v", err)
 	}
 
-	want := filepath.Join(rootA, "new-workspace")
+	want := filepath.Join(rootB, "new-workspace")
 	if target != want {
 		t.Fatalf("unexpected target: got %q want %q", target, want)
 	}
