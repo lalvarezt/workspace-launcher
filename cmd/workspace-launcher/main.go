@@ -51,7 +51,7 @@ const (
 	gitMaxWidth    = 48
 	nameMinWidth   = 16
 	ageWidth       = 12
-	chromeWidth    = 18
+	chromeWidth    = 10
 )
 
 const (
@@ -577,7 +577,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 
 		out[i] = candidate{
 			path:       detail.child.path,
-			display:    strings.Join(fields, "\t"),
+			display:    joinDisplayFields(fields),
 			matchText:  detail.matchText,
 			branchText: branchSearchText(detail.git.branchLabel),
 			epoch:      detail.epoch,
@@ -1231,6 +1231,7 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 		"--ansi",
 		"--scheme=history",
 		"--layout=reverse",
+		"--tabstop=1",
 		"--prompt=",
 		"--pointer=▌",
 		"--color=bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2",
@@ -1287,6 +1288,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error
 }
 
 func fzfSearchNth(cfg config) string {
+	// --nth applies to the fields exposed by --with-nth, not the hidden serialized
+	// prefix fields. Keep this aligned with the visible display-column order.
 	columns := make([]string, 0, 2)
 	column := 1
 	if cfg.showRoot {
@@ -1513,6 +1516,22 @@ func fitField(text string, width int) string {
 	return trimmed + strings.Repeat(" ", width-displayWidth(trimmed))
 }
 
+func joinDisplayFields(fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+
+	padded := make([]string, len(fields))
+	for i, field := range fields {
+		padded[i] = field
+		if i < len(fields)-1 && gapWidth > 1 {
+			padded[i] += strings.Repeat(" ", gapWidth-1)
+		}
+	}
+
+	return strings.Join(padded, "\t")
+}
+
 func displayWidth(text string) int {
 	width := 0
 	for _, r := range text {
@@ -1532,7 +1551,7 @@ func runeDisplayWidth(r rune) int {
 	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
 		return 0
 	case unicode.In(r, unicode.Co):
-		return 2
+		return 1
 	default:
 		kind := width.LookupRune(r).Kind()
 		if kind == width.EastAsianWide || kind == width.EastAsianFullwidth {
