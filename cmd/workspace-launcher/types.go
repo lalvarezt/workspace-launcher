@@ -98,6 +98,7 @@ type candidate struct {
 	display    string
 	matchText  string
 	branchText string
+	searchText string
 	epoch      int64
 }
 

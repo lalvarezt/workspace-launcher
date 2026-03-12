@@ -220,9 +220,8 @@ func fzfSearchNth(cfg config) string {
 func pickRepoHeadless(cfg config, candidates []candidate) (pickerResult, error) {
 	query := strings.ToLower(cfg.initialQuery)
 	for _, cand := range candidates {
-		line := serializeCandidate(cand)
-		if query == "" || strings.Contains(strings.ToLower(candidateSearchText(cand)), query) {
-			return pickerResult{selection: line, createRoot: defaultCreateRoot(cfg)}, nil
+		if query == "" || strings.Contains(candidateSearchText(cand), query) {
+			return pickerResult{selection: serializeCandidate(cand), createRoot: defaultCreateRoot(cfg)}, nil
 		}
 	}
 	return pickerResult{}, exitCodeError{code: 1}
@@ -275,10 +274,17 @@ func serializeCandidate(cand candidate) string {
 }
 
 func candidateSearchText(cand candidate) string {
-	if cand.branchText == "" {
-		return cand.matchText
+	if cand.searchText != "" {
+		return cand.searchText
 	}
-	return cand.matchText + " " + cand.branchText
+	return buildCandidateSearchText(cand.matchText, cand.branchText)
+}
+
+func buildCandidateSearchText(matchText, branchText string) string {
+	if branchText == "" {
+		return strings.ToLower(matchText)
+	}
+	return strings.ToLower(matchText + " " + branchText)
 }
 
 func branchSearchText(branch string) string {

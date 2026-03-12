@@ -150,6 +150,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		if branch == "" {
 			branch = "-"
 		}
+		branchText := branchSearchText(detail.git.branchLabel)
 
 		markerField := paintFieldStyled(styled, cDim, " ")
 		if isCurrentRepo(cfg.cwd, detail.child.path) {
@@ -175,7 +176,8 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 			path:       detail.child.path,
 			display:    joinDisplayFields(fields),
 			matchText:  detail.matchText,
-			branchText: branchSearchText(detail.git.branchLabel),
+			branchText: branchText,
+			searchText: buildCandidateSearchText(detail.matchText, branchText),
 			epoch:      detail.epoch,
 		}
 	}

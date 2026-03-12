@@ -156,6 +156,7 @@ func BenchmarkPickRepoHeadless_QueryMatchEarly(b *testing.B) {
 			cands := makeBenchCandidates(candCount)
 			cands[0].matchText = "needle-early"
 			cands[0].display = "needle-early"
+			cands[0].searchText = buildCandidateSearchText(cands[0].matchText, cands[0].branchText)
 			cfg := config{
 				headlessBench: true,
 				initialQuery:  "needle-early",
@@ -190,6 +191,7 @@ func BenchmarkPickRepoHeadless_QueryMatchLate(b *testing.B) {
 			cands := makeBenchCandidates(candCount)
 			last := len(cands) - 1
 			cands[last].branchText = "feature/needle-late"
+			cands[last].searchText = buildCandidateSearchText(cands[last].matchText, cands[last].branchText)
 			cfg := config{
 				headlessBench: true,
 				initialQuery:  "needle-late",
@@ -290,11 +292,13 @@ func makeBenchCandidates(count int) []candidate {
 	cands := make([]candidate, count)
 	for i := range count {
 		name := fmt.Sprintf("repo-%04d", i)
+		branch := fmt.Sprintf("feature/%s", name)
 		cands[i] = candidate{
 			path:       filepath.Join("/tmp/workspaces", name),
 			display:    name,
 			matchText:  name,
-			branchText: fmt.Sprintf("feature/%s", name),
+			branchText: branch,
+			searchText: buildCandidateSearchText(name, branch),
 		}
 	}
 	return cands
