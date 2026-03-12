@@ -124,6 +124,7 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 		lang:      lang,
 		git:       git,
 		matchText: child.name,
+		ageText:   formatAge(cfg.now, epoch),
 		epoch:     epoch,
 	}, nil
 }
@@ -150,13 +151,14 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		if branch == "" {
 			branch = "-"
 		}
+		branchText := branchSearchText(detail.git.branchLabel)
 
 		markerField := paintFieldStyled(styled, cDim, " ")
 		if isCurrentRepo(cfg.cwd, detail.child.path) {
 			markerField = paintFieldStyled(styled, cCurrent, "*")
 		}
 		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
-		ageField := renderAgeFieldStyled(formatAge(cfg.now, detail.epoch), cfg.ageColumnWidth, styled)
+		ageField := renderAgeFieldStyled(detail.ageText, cfg.ageColumnWidth, styled)
 
 		fields := make([]string, 0, 4)
 		if cfg.showRoot {
@@ -175,7 +177,8 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 			path:       detail.child.path,
 			display:    joinDisplayFields(fields),
 			matchText:  detail.matchText,
-			branchText: branchSearchText(detail.git.branchLabel),
+			branchText: branchText,
+			searchText: buildCandidateSearchText(detail.matchText, branchText),
 			epoch:      detail.epoch,
 		}
 	}

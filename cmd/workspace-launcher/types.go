@@ -98,6 +98,7 @@ type candidate struct {
 	display    string
 	matchText  string
 	branchText string
+	searchText string
 	epoch      int64
 }
 
@@ -113,6 +114,7 @@ type repoDetails struct {
 	lang      string
 	git       gitMeta
 	matchText string
+	ageText   string
 	epoch     int64
 }
 

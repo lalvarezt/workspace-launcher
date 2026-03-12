@@ -12,6 +12,21 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+)
+
+type resettableZlibReader interface {
+	io.ReadCloser
+	Reset(io.Reader, []byte) error
+}
+
+var (
+	commitObjectReaderPool = sync.Pool{
+		New: func() any {
+			return bufio.NewReaderSize(strings.NewReader(""), 1024)
+		},
+	}
+	zlibReaderPool sync.Pool
 )
 
 func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool) gitMeta {
@@ -66,7 +81,11 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 		meta.isWorktree = false
 	}
 	if wantEpoch {
-		layout, layoutErr := finalizeGitLayout(gitDir)
+		layout := gitLayout{gitDir: gitDir, commonDir: gitDir}
+		var layoutErr error
+		if isWorktree {
+			layout, layoutErr = finalizeGitLayout(gitDir)
+		}
 		if layoutErr == nil {
 			head, headErr := readHeadFile(layout.gitDir)
 			if headErr == nil {
@@ -196,14 +215,14 @@ func finalizeGitLayout(gitDir string) (gitLayout, error) {
 		gitDir:    gitDir,
 		commonDir: gitDir,
 	}
-	content, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
+	content, err := readTrimmedSmallFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return layout, nil
 		}
 		return gitLayout{}, err
 	}
-	commonDir := strings.TrimSpace(string(content))
+	commonDir := content
 	if commonDir == "" {
 		return layout, nil
 	}
@@ -215,11 +234,10 @@ func finalizeGitLayout(gitDir string) (gitLayout, error) {
 }
 
 func readHeadFile(gitDir string) (string, error) {
-	content, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	head, err := readTrimmedSmallFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
 		return "", err
 	}
-	head := strings.TrimSpace(string(content))
 	if head == "" {
 		return "", errors.New("empty HEAD")
 	}
@@ -232,13 +250,18 @@ func resolveHeadHashFromHead(layout gitLayout, head string) (string, error) {
 	}
 
 	refName := strings.TrimSpace(strings.TrimPrefix(head, "ref: "))
+	refPathSuffix := filepath.FromSlash(refName)
 	for _, baseDir := range []string{layout.gitDir, layout.commonDir} {
-		refPath := filepath.Join(baseDir, filepath.FromSlash(refName))
-		if refValue, err := os.ReadFile(refPath); err == nil {
-			hash := strings.TrimSpace(string(refValue))
+		refPath := filepath.Join(baseDir, refPathSuffix)
+		hash, err := readTrimmedSmallFile(refPath)
+		if err == nil {
 			if hash != "" {
 				return hash, nil
 			}
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
 		}
 	}
 
@@ -349,13 +372,14 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 	}
 	defer file.Close()
 
-	reader, err := zlib.NewReader(file)
+	reader, err := acquireZlibReader(file)
 	if err != nil {
 		return 0, err
 	}
-	defer reader.Close()
+	defer releaseZlibReader(reader)
 
-	buf := bufio.NewReaderSize(reader, 1024)
+	buf := acquireCommitObjectReader(reader)
+	defer releaseCommitObjectReader(buf)
 	if _, err := buf.ReadBytes(0); err != nil {
 		return 0, errors.New("invalid object header")
 	}
@@ -366,11 +390,11 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 			return 0, err
 		}
 		if strings.HasPrefix(line, "committer ") {
-			fields := strings.Fields(strings.TrimSpace(line))
-			if len(fields) < 3 {
-				break
+			epochText, parseErr := parseCommitterEpoch(line)
+			if parseErr != nil {
+				return 0, parseErr
 			}
-			epoch, parseErr := strconv.ParseInt(fields[len(fields)-2], 10, 64)
+			epoch, parseErr := strconv.ParseInt(epochText, 10, 64)
 			if parseErr != nil {
 				return 0, parseErr
 			}
@@ -382,6 +406,81 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 	}
 
 	return 0, errors.New("committer line not found")
+}
+
+func acquireZlibReader(r io.Reader) (resettableZlibReader, error) {
+	if pooled := zlibReaderPool.Get(); pooled != nil {
+		reader := pooled.(resettableZlibReader)
+		if err := reader.Reset(r, nil); err == nil {
+			return reader, nil
+		}
+		_ = reader.Close()
+	}
+
+	reader, err := zlib.NewReader(r)
+	if err != nil {
+		return nil, err
+	}
+
+	resettable, ok := reader.(resettableZlibReader)
+	if !ok {
+		_ = reader.Close()
+		return nil, errors.New("zlib reader does not support reset")
+	}
+	return resettable, nil
+}
+
+func releaseZlibReader(reader resettableZlibReader) {
+	_ = reader.Close()
+	zlibReaderPool.Put(reader)
+}
+
+func acquireCommitObjectReader(r io.Reader) *bufio.Reader {
+	reader := commitObjectReaderPool.Get().(*bufio.Reader)
+	reader.Reset(r)
+	return reader
+}
+
+func releaseCommitObjectReader(reader *bufio.Reader) {
+	reader.Reset(strings.NewReader(""))
+	commitObjectReaderPool.Put(reader)
+}
+
+func readTrimmedSmallFile(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	var buf [512]byte
+	n, err := file.Read(buf[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	if n == 0 {
+		return "", nil
+	}
+	if n == len(buf) {
+		var extra [1]byte
+		if extraN, extraErr := file.Read(extra[:]); extraErr == nil || (extraErr == io.EOF && extraN > 0) {
+			return "", errors.New("git metadata file too large")
+		}
+	}
+	return strings.TrimSpace(string(buf[:n])), nil
+}
+
+func parseCommitterEpoch(line string) (string, error) {
+	line = strings.TrimSpace(line)
+	lastSpace := strings.LastIndexByte(line, ' ')
+	if lastSpace < 0 {
+		return "", errors.New("invalid committer line")
+	}
+	prevSpace := strings.LastIndexByte(line[:lastSpace], ' ')
+	if prevSpace < 0 || prevSpace+1 >= lastSpace {
+		return "", errors.New("invalid committer line")
+	}
+	return line[prevSpace+1 : lastSpace], nil
 }
 
 func gitIsDirty(dir string) (bool, error) {

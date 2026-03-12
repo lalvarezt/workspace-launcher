@@ -122,7 +122,11 @@ func formatAge(now, epoch int64) string {
 func computeAgeColumnWidth(now int64, details []repoDetails) int {
 	width := ageWidth
 	for _, detail := range details {
-		currentWidth := displayWidth(formatAge(now, detail.epoch)) + 1
+		age := detail.ageText
+		if age == "" {
+			age = formatAge(now, detail.epoch)
+		}
+		currentWidth := displayWidth(age) + 1
 		if currentWidth > width {
 			width = currentWidth
 		}
@@ -207,15 +211,29 @@ func joinDisplayFields(fields []string) string {
 		return ""
 	}
 
-	padded := make([]string, len(fields))
+	totalLen := 0
+	for _, field := range fields {
+		totalLen += len(field)
+	}
+	if len(fields) > 1 {
+		totalLen += (len(fields) - 1) * gapWidth
+	}
+
+	var b strings.Builder
+	b.Grow(totalLen)
 	for i, field := range fields {
-		padded[i] = field
+		if i > 0 {
+			b.WriteByte('\t')
+		}
+		b.WriteString(field)
 		if i < len(fields)-1 && gapWidth > 1 {
-			padded[i] += strings.Repeat(" ", gapWidth-1)
+			for range gapWidth - 1 {
+				b.WriteByte(' ')
+			}
 		}
 	}
 
-	return strings.Join(padded, "\t")
+	return b.String()
 }
 
 func displayWidth(text string) int {
@@ -313,16 +331,11 @@ func renderAgeFieldStyled(age string, width int, styled bool) string {
 		return paintFieldStyled(styled, cTime, fitFieldRight(text, width))
 	}
 
-	blocks := strings.Fields(age)
-	candidates := []string{age}
-	if len(blocks) >= 2 {
-		candidates = append(candidates, strings.Join(blocks[:2], " "))
-	}
-	if len(blocks) >= 1 {
-		candidates = append(candidates, blocks[0])
-	}
-
-	for _, candidate := range candidates {
+	firstBlock, twoBlocks, ok := ageBlocks(age)
+	for _, candidate := range [...]string{age, twoBlocks, firstBlock} {
+		if candidate == "" {
+			continue
+		}
 		if displayWidth(candidate)+1 <= width {
 			return render(candidate, true)
 		}
@@ -330,11 +343,10 @@ func renderAgeFieldStyled(age string, width int, styled bool) string {
 			return render(candidate, false)
 		}
 	}
-
-	if len(blocks) == 0 {
+	if !ok {
 		return render(age, false)
 	}
-	return render(blocks[0], false)
+	return render(firstBlock, false)
 }
 
 func renderLangFieldStyled(lang string, width int, styled bool) string {
@@ -410,4 +422,19 @@ func renderGitFieldStyled(meta gitMeta, branch string, width int, styled bool) s
 	}
 
 	return paintFieldStyled(styled, color, fitField(gitFieldText(meta, branch), width))
+}
+
+func ageBlocks(age string) (string, string, bool) {
+	firstSpace := strings.IndexByte(age, ' ')
+	if firstSpace < 0 {
+		return "", "", false
+	}
+	firstBlock := age[:firstSpace]
+
+	secondSpaceRel := strings.IndexByte(age[firstSpace+1:], ' ')
+	if secondSpaceRel < 0 {
+		return firstBlock, "", true
+	}
+	secondSpace := firstSpace + 1 + secondSpaceRel
+	return firstBlock, age[:secondSpace], true
 }

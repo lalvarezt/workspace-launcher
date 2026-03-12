@@ -43,6 +43,9 @@ bench root="/tmp/workspace-launcher-bench" count="1500" warmup="3":
       "WORKSPACE_LAUNCHER_BENCH_MODE=headless ./.build/workspace-launcher {{root}} >/dev/null" \
       "WORKSPACE_LAUNCHER_BENCH_MODE=headless WORKSPACE_LAUNCHER_RECENCY=git ./.build/workspace-launcher {{root}} >/dev/null"
 
+bench-go filter=".":
+    go test ./cmd/workspace-launcher -run '^$' -bench "{{filter}}" -benchmem
+
 run *args:
     just build
     ./.build/workspace-launcher {{args}}

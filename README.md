@@ -269,8 +269,11 @@ go run ./cmd/bench-setup
 
 ## Benchmarking
 
-Benchmark fixture setup and `hyperfine` examples live in
-[`docs/benchmarking.md`](docs/benchmarking.md).
+Two benchmarking workflows are documented in
+[`docs/benchmarking.md`](docs/benchmarking.md):
+
+- `just bench-go` for native `go test -bench` coverage of core hot paths
+- `just bench` for end-to-end headless timing with `hyperfine`
 
 ## Acknowledgements
 

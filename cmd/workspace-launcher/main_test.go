@@ -1398,7 +1398,7 @@ func TestResolveSelectionUsesFirstRootWhenActiveRootIsAll(t *testing.T) {
 	}
 }
 
-func makeDir(t *testing.T, dir string, epoch int64, marker string) {
+func makeDir(t testing.TB, dir string, epoch int64, marker string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
@@ -1411,7 +1411,7 @@ func makeDir(t *testing.T, dir string, epoch int64, marker string) {
 	setDirTime(t, dir, epoch)
 }
 
-func makeGitRepo(t *testing.T, dir string, epoch int64) {
+func makeGitRepo(t testing.TB, dir string, epoch int64) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
@@ -1438,7 +1438,7 @@ func makeGitRepo(t *testing.T, dir string, epoch int64) {
 	setDirTime(t, dir, epoch-100)
 }
 
-func initTestRepo(t *testing.T) string {
+func initTestRepo(t testing.TB) string {
 	t.Helper()
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -1447,7 +1447,7 @@ func initTestRepo(t *testing.T) string {
 	return repo
 }
 
-func commitAt(t *testing.T, repo, epoch, contents string) {
+func commitAt(t testing.TB, repo, epoch, contents string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte(contents), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -1467,7 +1467,7 @@ func commitAt(t *testing.T, repo, epoch, contents string) {
 	}
 }
 
-func currentBranchName(t *testing.T, repo string) string {
+func currentBranchName(t testing.TB, repo string) string {
 	t.Helper()
 	branch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"))
 	if branch == "" || branch == "HEAD" {
@@ -1476,7 +1476,7 @@ func currentBranchName(t *testing.T, repo string) string {
 	return branch
 }
 
-func setDirTime(t *testing.T, dir string, epoch int64) {
+func setDirTime(t testing.TB, dir string, epoch int64) {
 	t.Helper()
 	ts := time.Unix(epoch, 0)
 	if err := os.Chtimes(dir, ts, ts); err != nil {
@@ -1484,7 +1484,7 @@ func setDirTime(t *testing.T, dir string, epoch int64) {
 	}
 }
 
-func runGit(t *testing.T, dir string, args ...string) string {
+func runGit(t testing.TB, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(),
@@ -1499,7 +1499,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(output)
 }
 
-func writeTestScript(t *testing.T, content string) string {
+func writeTestScript(t testing.TB, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test-script.sh")
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
