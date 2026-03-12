@@ -763,35 +763,35 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 }
 
 func TestRenderGitFieldUsesGitIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true}, "main", 12)
+	field := renderGitFieldStyled(gitMeta{present: true}, "main", 12, true)
 	if !strings.Contains(field, "  main") {
 		t.Fatalf("unexpected git field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesWorktreeIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui", 24)
+	field := renderGitFieldStyled(gitMeta{present: true, isWorktree: true}, "feature/worktree-ui", 24, true)
 	if !strings.Contains(field, "󰙅  feature/worktree-ui") {
 		t.Fatalf("unexpected worktree field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesLockIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true, isLocked: true}, "main", 12)
+	field := renderGitFieldStyled(gitMeta{present: true, isLocked: true}, "main", 12, true)
 	if !strings.Contains(field, "") {
 		t.Fatalf("unexpected locked field: %q", field)
 	}
 }
 
 func TestRenderGitFieldUsesSubmoduleIcon(t *testing.T) {
-	field := renderGitField(gitMeta{present: true, isSubmodule: true}, "main", 12)
+	field := renderGitFieldStyled(gitMeta{present: true, isSubmodule: true}, "main", 12, true)
 	if !strings.Contains(field, "") {
 		t.Fatalf("unexpected submodule field: %q", field)
 	}
 }
 
 func TestRenderGitFieldMarksNonGitEntries(t *testing.T) {
-	field := renderGitField(gitMeta{}, "-", 3)
+	field := renderGitFieldStyled(gitMeta{}, "-", 3, true)
 	if !strings.Contains(field, "-") {
 		t.Fatalf("unexpected non-git field: %q", field)
 	}
@@ -931,7 +931,7 @@ func TestDescribeRepoIncludesBranchTextInGitField(t *testing.T) {
 }
 
 func TestRenderGitFieldTruncatesLongNames(t *testing.T) {
-	field := renderGitField(gitMeta{present: true}, "feature/this-is-a-very-long-branch-name", 12)
+	field := renderGitFieldStyled(gitMeta{present: true}, "feature/this-is-a-very-long-branch-name", 12, true)
 	if !strings.Contains(field, "...") {
 		t.Fatalf("expected truncated git field, got %q", field)
 	}
@@ -953,6 +953,165 @@ func TestComputeGitColumnWidthClampsAtMax(t *testing.T) {
 	})
 	if width != gitMaxWidth {
 		t.Fatalf("unexpected clamped width: got %d want %d", width, gitMaxWidth)
+	}
+}
+
+func TestApplyLayoutWidthsShrinksLanguageBeforeWorkspace(t *testing.T) {
+	cfg := config{
+		cols:            76,
+		showLanguage:    true,
+		showGit:         true,
+		langColumnWidth: langWidth,
+		gitColumnWidth:  24,
+	}
+
+	applyLayoutWidths(&cfg)
+
+	if cfg.nameWidth != nameMinWidth {
+		t.Fatalf("expected name width %d, got %d", nameMinWidth, cfg.nameWidth)
+	}
+	if cfg.langColumnWidth != 8 {
+		t.Fatalf("expected language column to shrink first, got %d", cfg.langColumnWidth)
+	}
+	if cfg.gitColumnWidth != 24 {
+		t.Fatalf("expected git column to remain untouched, got %d", cfg.gitColumnWidth)
+	}
+}
+
+func TestApplyLayoutWidthsShrinksGitAfterLanguage(t *testing.T) {
+	cfg := config{
+		cols:            60,
+		showLanguage:    true,
+		showGit:         true,
+		ageColumnWidth:  ageWidth,
+		langColumnWidth: langWidth,
+		gitColumnWidth:  24,
+	}
+
+	applyLayoutWidths(&cfg)
+
+	if cfg.nameWidth != nameMinWidth {
+		t.Fatalf("expected name width %d, got %d", nameMinWidth, cfg.nameWidth)
+	}
+	if cfg.langColumnWidth != langMinWidth {
+		t.Fatalf("expected language column to reach icon-only width, got %d", cfg.langColumnWidth)
+	}
+	if cfg.ageColumnWidth != ageOneWidth {
+		t.Fatalf("expected age column to fully shrink before git, got %d", cfg.ageColumnWidth)
+	}
+	if cfg.gitColumnWidth != 22 {
+		t.Fatalf("expected git column to shrink after language and age, got %d", cfg.gitColumnWidth)
+	}
+}
+
+func TestApplyLayoutWidthsPreservesPreferredDirectoryNameWidth(t *testing.T) {
+	cfg := config{
+		cols:            80,
+		showLanguage:    true,
+		showGit:         true,
+		showRoot:        true,
+		nameWidth:       24,
+		ageColumnWidth:  ageWidth,
+		langColumnWidth: langWidth,
+		gitColumnWidth:  24,
+		rootLabelWidth:  12,
+	}
+
+	applyLayoutWidths(&cfg)
+
+	if cfg.nameWidth != 24 {
+		t.Fatalf("expected directory name width 24, got %d", cfg.nameWidth)
+	}
+	if cfg.langColumnWidth != langMinWidth {
+		t.Fatalf("expected language column at minimum width, got %d", cfg.langColumnWidth)
+	}
+	if cfg.ageColumnWidth != ageOneWidth {
+		t.Fatalf("expected age column to fully shrink before git, got %d", cfg.ageColumnWidth)
+	}
+	if cfg.gitColumnWidth != 19 {
+		t.Fatalf("expected git column to shrink before the name column, got %d", cfg.gitColumnWidth)
+	}
+	if cfg.rootLabelWidth != 12 {
+		t.Fatalf("expected root label width to remain unchanged, got %d", cfg.rootLabelWidth)
+	}
+}
+
+func TestApplyLayoutWidthsShrinksTimeBeforeWorkspace(t *testing.T) {
+	cfg := config{
+		cols:           32,
+		nameWidth:      18,
+		ageColumnWidth: ageWidth,
+	}
+
+	applyLayoutWidths(&cfg)
+
+	if cfg.nameWidth != 18 {
+		t.Fatalf("expected directory name width 18, got %d", cfg.nameWidth)
+	}
+	if cfg.ageColumnWidth != ageOneWidth {
+		t.Fatalf("expected time column to shrink before the name column, got %d", cfg.ageColumnWidth)
+	}
+}
+
+func TestApplyLayoutWidthsKeepsRootWidthAndShrinksWorkspaceLast(t *testing.T) {
+	cfg := config{
+		cols:           45,
+		showRoot:       true,
+		nameWidth:      16,
+		rootLabelWidth: 12,
+		ageColumnWidth: ageWidth,
+	}
+
+	applyLayoutWidths(&cfg)
+
+	if cfg.ageColumnWidth != ageOneWidth {
+		t.Fatalf("expected time column to shrink first, got %d", cfg.ageColumnWidth)
+	}
+	if cfg.rootLabelWidth != 12 {
+		t.Fatalf("expected root label width to remain unchanged, got %d", cfg.rootLabelWidth)
+	}
+	if cfg.nameWidth != 16 {
+		t.Fatalf("expected workspace column to remain at minimum width after age shrink, got %d", cfg.nameWidth)
+	}
+}
+
+func TestComputeNameColumnWidthUsesLongestDirectoryName(t *testing.T) {
+	width := computeNameColumnWidth([]repoDetails{
+		{child: childDir{name: "short"}},
+		{child: childDir{name: "longer-directory-name"}},
+	})
+	if width != len("longer-directory-name") {
+		t.Fatalf("unexpected name width: got %d want %d", width, len("longer-directory-name"))
+	}
+}
+
+func TestRenderLangFieldSupportsIconOnlyWidth(t *testing.T) {
+	field := renderLangFieldStyled("Go", langMinWidth, true)
+	if !strings.Contains(field, "") {
+		t.Fatalf("expected language icon in %q", field)
+	}
+	if strings.Contains(field, "Go") {
+		t.Fatalf("expected icon-only rendering, got %q", field)
+	}
+}
+
+func TestRenderAgeFieldDropsWholeBlocksWithoutEllipsis(t *testing.T) {
+	field := renderAgeFieldStyled("01d 02h 03m", ageTwoWidth, true)
+	if strings.Contains(field, "...") {
+		t.Fatalf("expected age field without ellipsis, got %q", field)
+	}
+	if !strings.Contains(field, "01d 02h") {
+		t.Fatalf("expected first two age blocks, got %q", field)
+	}
+	if strings.Contains(field, "03m") {
+		t.Fatalf("expected minutes block to be removed, got %q", field)
+	}
+}
+
+func TestRenderAgeFieldSupportsSingleBlockWidth(t *testing.T) {
+	field := renderAgeFieldStyled("01d 02h 03m", ageOneWidth, false)
+	if strings.TrimSpace(field) != "01d" {
+		t.Fatalf("expected single age block, got %q", field)
 	}
 }
 
