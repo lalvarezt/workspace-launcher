@@ -8,6 +8,20 @@ help:
 test:
     go test ./...
 
+lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    golangci_bin="$(go env GOPATH)/bin/golangci-lint"
+    staticcheck_bin="$(go env GOPATH)/bin/staticcheck"
+    if [[ ! -x "$golangci_bin" ]]; then
+      go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    fi
+    if [[ ! -x "$staticcheck_bin" ]]; then
+      go install honnef.co/go/tools/cmd/staticcheck@latest
+    fi
+    "$golangci_bin" run ./...
+    "$staticcheck_bin" ./...
+
 build:
     #!/usr/bin/env bash
     set -euo pipefail
