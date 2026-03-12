@@ -12,6 +12,21 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+)
+
+type resettableZlibReader interface {
+	io.ReadCloser
+	Reset(io.Reader, []byte) error
+}
+
+var (
+	commitObjectReaderPool = sync.Pool{
+		New: func() any {
+			return bufio.NewReaderSize(strings.NewReader(""), 1024)
+		},
+	}
+	zlibReaderPool sync.Pool
 )
 
 func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool) gitMeta {
@@ -66,7 +81,11 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 		meta.isWorktree = false
 	}
 	if wantEpoch {
-		layout, layoutErr := finalizeGitLayout(gitDir)
+		layout := gitLayout{gitDir: gitDir, commonDir: gitDir}
+		var layoutErr error
+		if isWorktree {
+			layout, layoutErr = finalizeGitLayout(gitDir)
+		}
 		if layoutErr == nil {
 			head, headErr := readHeadFile(layout.gitDir)
 			if headErr == nil {
@@ -349,13 +368,14 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 	}
 	defer file.Close()
 
-	reader, err := zlib.NewReader(file)
+	reader, err := acquireZlibReader(file)
 	if err != nil {
 		return 0, err
 	}
-	defer reader.Close()
+	defer releaseZlibReader(reader)
 
-	buf := bufio.NewReaderSize(reader, 1024)
+	buf := acquireCommitObjectReader(reader)
+	defer releaseCommitObjectReader(buf)
 	if _, err := buf.ReadBytes(0); err != nil {
 		return 0, errors.New("invalid object header")
 	}
@@ -382,6 +402,44 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 	}
 
 	return 0, errors.New("committer line not found")
+}
+
+func acquireZlibReader(r io.Reader) (resettableZlibReader, error) {
+	if pooled := zlibReaderPool.Get(); pooled != nil {
+		reader := pooled.(resettableZlibReader)
+		if err := reader.Reset(r, nil); err == nil {
+			return reader, nil
+		}
+		_ = reader.Close()
+	}
+
+	reader, err := zlib.NewReader(r)
+	if err != nil {
+		return nil, err
+	}
+
+	resettable, ok := reader.(resettableZlibReader)
+	if !ok {
+		_ = reader.Close()
+		return nil, errors.New("zlib reader does not support reset")
+	}
+	return resettable, nil
+}
+
+func releaseZlibReader(reader resettableZlibReader) {
+	_ = reader.Close()
+	zlibReaderPool.Put(reader)
+}
+
+func acquireCommitObjectReader(r io.Reader) *bufio.Reader {
+	reader := commitObjectReaderPool.Get().(*bufio.Reader)
+	reader.Reset(r)
+	return reader
+}
+
+func releaseCommitObjectReader(reader *bufio.Reader) {
+	reader.Reset(strings.NewReader(""))
+	commitObjectReaderPool.Put(reader)
 }
 
 func gitIsDirty(dir string) (bool, error) {
