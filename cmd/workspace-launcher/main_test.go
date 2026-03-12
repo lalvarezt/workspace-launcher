@@ -1161,6 +1161,46 @@ func TestComputeNameColumnWidthUsesLongestDirectoryName(t *testing.T) {
 	}
 }
 
+func TestComputeAgeColumnWidth(t *testing.T) {
+	now := int64(1_700_000_000)
+
+	tests := []struct {
+		name    string
+		details []repoDetails
+		want    int
+	}{
+		{
+			name: "defaults to base width for double digit days",
+			details: []repoDetails{
+				{epoch: now - 99*86400},
+			},
+			want: ageWidth,
+		},
+		{
+			name: "grows for triple digit days",
+			details: []repoDetails{
+				{epoch: now - 100*86400},
+			},
+			want: ageWidth + 1,
+		},
+		{
+			name: "grows for four digit days",
+			details: []repoDetails{
+				{epoch: now - 1000*86400},
+			},
+			want: ageWidth + 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := computeAgeColumnWidth(now, tt.details); got != tt.want {
+				t.Fatalf("unexpected age width: got %d want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderCompactMetadataFields(t *testing.T) {
 	t.Run("language icon only", func(t *testing.T) {
 		field := renderLangFieldStyled("Go", langMinWidth, true)
@@ -1189,6 +1229,23 @@ func TestRenderCompactMetadataFields(t *testing.T) {
 		field := renderAgeFieldStyled("01d 02h 03m", ageOneWidth, false)
 		if strings.TrimSpace(field) != "01d" {
 			t.Fatalf("expected single age block, got %q", field)
+		}
+	})
+
+	t.Run("age preserves wider full width", func(t *testing.T) {
+		field := renderAgeFieldStyled("1000d 02h 03m", ageWidth+2, false)
+		if strings.TrimRight(field, " ") != "1000d 02h 03m" {
+			t.Fatalf("expected full age field, got %q", field)
+		}
+		if got := displayWidth(field); got != ageWidth+2 {
+			t.Fatalf("unexpected display width: got %d want %d", got, ageWidth+2)
+		}
+	})
+
+	t.Run("age right aligns when column grows", func(t *testing.T) {
+		field := renderAgeFieldStyled("99d 02h 03m", ageWidth+1, false)
+		if field != " 99d 02h 03m " {
+			t.Fatalf("expected right-aligned age field, got %q", field)
 		}
 	})
 }

@@ -595,7 +595,7 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 
 func renderCandidates(cfg config, details []repoDetails) []candidate {
 	cfg.nameWidth = computeNameColumnWidth(details)
-	cfg.ageColumnWidth = ageWidth
+	cfg.ageColumnWidth = computeAgeColumnWidth(cfg.now, details)
 	if cfg.showLanguage {
 		cfg.langColumnWidth = langWidth
 	} else {
@@ -1975,10 +1975,21 @@ func formatAge(now, epoch int64) string {
 	return fmt.Sprintf("%02dd %02dh %02dm", days, hours, mins)
 }
 
+func computeAgeColumnWidth(now int64, details []repoDetails) int {
+	width := ageWidth
+	for _, detail := range details {
+		currentWidth := displayWidth(formatAge(now, detail.epoch)) + 1
+		if currentWidth > width {
+			width = currentWidth
+		}
+	}
+	return width
+}
+
 func normalizeAgeColumnWidth(width int) int {
 	switch {
 	case width >= ageWidth:
-		return ageWidth
+		return width
 	case width >= ageTwoWidth:
 		return ageTwoWidth
 	default:
@@ -1990,10 +2001,10 @@ func shrinkAgeColumnWidth(width, deficit int) int {
 	width = normalizeAgeColumnWidth(width)
 	for deficit > 0 {
 		next := width
-		switch width {
-		case ageWidth:
+		switch {
+		case width > ageTwoWidth:
 			next = ageTwoWidth
-		case ageTwoWidth:
+		case width > ageOneWidth:
 			next = ageOneWidth
 		default:
 			return width
@@ -2021,6 +2032,17 @@ func fitField(text string, width int) string {
 	}
 	trimmed := trimDisplayWidth(text, width-3) + "..."
 	return trimmed + strings.Repeat(" ", width-displayWidth(trimmed))
+}
+
+func fitFieldRight(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	visibleWidth := displayWidth(text)
+	if visibleWidth <= width {
+		return strings.Repeat(" ", width-visibleWidth) + text
+	}
+	return fitField(text, width)
 }
 
 func centerField(text string, width int) string {
@@ -2141,23 +2163,30 @@ func renderAgeFieldStyled(age string, width int, styled bool) string {
 		return ""
 	}
 
+	render := func(text string) string {
+		if width == 1 {
+			return paintFieldStyled(styled, cTime, fitFieldRight(text, width))
+		}
+		return paintFieldStyled(styled, cTime, fitFieldRight(text, width-1)+" ")
+	}
+
 	blocks := strings.Fields(age)
 	switch normalizedWidth := normalizeAgeColumnWidth(width); {
 	case normalizedWidth >= ageWidth:
-		return paintFieldStyled(styled, cTime, fitField(age, width))
+		return render(age)
 	case normalizedWidth >= ageTwoWidth:
 		limit := 2
 		if len(blocks) < limit {
 			limit = len(blocks)
 		}
 		text := strings.Join(blocks[:limit], " ")
-		return paintFieldStyled(styled, cTime, fitField(text, width))
+		return render(text)
 	default:
 		text := age
 		if len(blocks) > 0 {
 			text = blocks[0]
 		}
-		return paintFieldStyled(styled, cTime, fitField(text, width))
+		return render(text)
 	}
 }
 
