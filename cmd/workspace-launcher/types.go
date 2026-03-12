@@ -23,7 +23,6 @@ const (
 )
 
 const (
-	columnGap      = "   "
 	gapWidth       = 3
 	rootMinWidth   = 8
 	rootMaxWidth   = 40

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -50,6 +51,9 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (pickerResult,
 			return pickerResult{}, nil
 		}
 		return pickerResult{}, writeErr
+	}
+	if waitErr == nil && isClosedPickerPipe(writeErr) {
+		writeErr = nil
 	}
 	if writeErr != nil {
 		return pickerResult{}, writeErr
@@ -258,8 +262,8 @@ func writeCandidateFile(path string, candidates []candidate) error {
 }
 
 func isPickerAbort(err error) bool {
-	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr) && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 130)
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
+	return ok && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 130)
 }
 
 func isClosedPickerPipe(err error) bool {
@@ -376,10 +380,8 @@ func readPickerCreateRoot(cfg config, state pickerState) string {
 	if root == activeRootAll {
 		return activeRootAll
 	}
-	for _, configuredRoot := range cfg.roots {
-		if root == configuredRoot {
-			return root
-		}
+	if slices.Contains(cfg.roots, root) {
+		return root
 	}
 	return defaultCreateRoot(cfg)
 }

@@ -15,11 +15,12 @@ var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		var exitErr exitCodeError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[exitCodeError](err); ok {
 			os.Exit(exitErr.code)
 		}
-		fmt.Fprintf(os.Stderr, "%s: %s\n", filepath.Base(os.Args[0]), err)
+		if _, writeErr := fmt.Fprintf(os.Stderr, "%s: %s\n", filepath.Base(os.Args[0]), err); writeErr != nil {
+			os.Exit(1)
+		}
 		os.Exit(1)
 	}
 }

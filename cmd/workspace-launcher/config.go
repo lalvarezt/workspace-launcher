@@ -14,10 +14,7 @@ import (
 )
 
 func parseConfig(args []string) (config, error) {
-	maxJobs := runtime.NumCPU()
-	if maxJobs < 1 {
-		maxJobs = 1
-	}
+	maxJobs := max(runtime.NumCPU(), 1)
 
 	roots := parseRootList(getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos"))
 	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", maxJobs), maxJobs)
@@ -87,7 +84,9 @@ func parseConfig(args []string) (config, error) {
 			}
 			return config{}, exitCodeError{code: 0}
 		case arg == "-h" || arg == "--help":
-			printUsage()
+			if err := printUsage(); err != nil {
+				return config{}, err
+			}
 			return config{}, exitCodeError{code: 0}
 		case arg == "--":
 			if i+1 < len(args) {
@@ -144,8 +143,8 @@ func parseConfig(args []string) (config, error) {
 	return cfg, nil
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
+func printUsage() error {
+	_, err := fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
 
 Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
@@ -179,6 +178,7 @@ Environment:
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
   WORKSPACE_LAUNCHER_SHOW_GIT       Show the git metadata column when set to 1 (default: 1)
 `, filepath.Base(os.Args[0]))
+	return err
 }
 
 func parseFzfStyle(style string) (string, error) {

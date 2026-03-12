@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -69,10 +70,8 @@ func resolveCreateRoot(cfg config, currentRoot string) (string, error) {
 		return defaultCreateRoot(cfg), nil
 	}
 
-	for _, configuredRoot := range cfg.roots {
-		if currentRoot == configuredRoot {
-			return configuredRoot, nil
-		}
+	if slices.Contains(cfg.roots, currentRoot) {
+		return currentRoot, nil
 	}
 
 	if len(cfg.roots) == 1 {
@@ -113,8 +112,7 @@ func openInEditor(target string) error {
 	cmd.Stdout = tty
 	cmd.Stderr = tty
 	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return exitCodeError{code: exitErr.ExitCode()}
 		}
 		return fmt.Errorf("open editor: %w", err)

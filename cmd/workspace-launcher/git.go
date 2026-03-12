@@ -226,14 +226,6 @@ func readHeadFile(gitDir string) (string, error) {
 	return head, nil
 }
 
-func resolveHeadHash(layout gitLayout) (string, error) {
-	head, err := readHeadFile(layout.gitDir)
-	if err != nil {
-		return "", err
-	}
-	return resolveHeadHashFromHead(layout, head)
-}
-
 func resolveHeadHashFromHead(layout gitLayout, head string) (string, error) {
 	if !strings.HasPrefix(head, "ref: ") {
 		return head, nil
@@ -258,8 +250,8 @@ func formatHeadLabel(head string) string {
 	if head == "" {
 		return "-"
 	}
-	if strings.HasPrefix(head, "ref: ") {
-		return formatRefLabel(strings.TrimSpace(strings.TrimPrefix(head, "ref: ")))
+	if refName, ok := strings.CutPrefix(head, "ref: "); ok {
+		return formatRefLabel(strings.TrimSpace(refName))
 	}
 	if len(head) > 7 {
 		head = head[:7]

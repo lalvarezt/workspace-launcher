@@ -10,10 +10,7 @@ import (
 )
 
 func applyLayoutWidths(cfg *config) {
-	targetNameWidth := cfg.nameWidth
-	if targetNameWidth < nameMinWidth {
-		targetNameWidth = nameMinWidth
-	}
+	targetNameWidth := max(cfg.nameWidth, nameMinWidth)
 
 	langColumnWidth := 0
 	if cfg.showLanguage {
@@ -94,7 +91,6 @@ func applyLayoutWidths(cfg *config) {
 			shrink = maxShrink
 		}
 		rootLabelWidth -= shrink
-		deficit -= shrink
 	}
 
 	reservedWidth = chromeWidth + ageColumnWidth
@@ -112,17 +108,11 @@ func applyLayoutWidths(cfg *config) {
 	cfg.langColumnWidth = langColumnWidth
 	cfg.gitColumnWidth = gitColumnWidth
 	cfg.rootLabelWidth = rootLabelWidth
-	cfg.nameWidth = cfg.cols - reservedWidth
-	if cfg.nameWidth < nameMinWidth {
-		cfg.nameWidth = nameMinWidth
-	}
+	cfg.nameWidth = max(cfg.cols-reservedWidth, nameMinWidth)
 }
 
 func formatAge(now, epoch int64) string {
-	diff := now - epoch
-	if diff < 0 {
-		diff = 0
-	}
+	diff := max(now-epoch, int64(0))
 	days := diff / 86400
 	hours := (diff % 86400) / 3600
 	mins := (diff % 3600) / 60
@@ -141,26 +131,16 @@ func computeAgeColumnWidth(now int64, details []repoDetails) int {
 }
 
 func compactAgeColumnWidths(fullWidth int) (int, int) {
-	if fullWidth < ageWidth {
-		fullWidth = ageWidth
-	}
-
-	twoBlockWidth := fullWidth - 4
-	if twoBlockWidth < ageTwoWidth {
-		twoBlockWidth = ageTwoWidth
-	}
-
-	oneBlockWidth := fullWidth - 8
-	if oneBlockWidth < ageOneWidth {
-		oneBlockWidth = ageOneWidth
-	}
+	fullWidth = max(fullWidth, ageWidth)
+	twoBlockWidth := max(fullWidth-4, ageTwoWidth)
+	oneBlockWidth := max(fullWidth-8, ageOneWidth)
 
 	return twoBlockWidth, oneBlockWidth
 }
 
 func shrinkAgeColumnWidth(width, twoBlockWidth, oneBlockWidth, deficit int) int {
 	for deficit > 0 {
-		next := width
+		var next int
 		switch {
 		case width > twoBlockWidth:
 			next = twoBlockWidth

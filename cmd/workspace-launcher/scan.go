@@ -58,20 +58,15 @@ func buildCandidates(cfg config) ([]candidate, error) {
 	jobs := make(chan int, len(children))
 	out := make(chan jobResult, len(children))
 	var wg sync.WaitGroup
-	workerCount := cfg.jobs
-	if workerCount > len(children) {
-		workerCount = len(children)
-	}
+	workerCount := min(cfg.jobs, len(children))
 
 	for range workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for idx := range jobs {
 				detail, err := inspectRepo(cfg, children[idx], needsInspect)
 				out <- jobResult{index: idx, detail: detail, err: err}
 			}
-		}()
+		})
 	}
 
 	for i := range children {
@@ -355,13 +350,8 @@ func rootLabelAtDepth(info rootLabelParts, depth int) string {
 	if len(info.parts) == 0 {
 		return info.clean
 	}
-	if depth > len(info.parts) {
-		depth = len(info.parts)
-	}
-	start := len(info.parts) - depth
-	if start < 0 {
-		start = 0
-	}
+	depth = min(depth, len(info.parts))
+	start := max(len(info.parts)-depth, 0)
 	return filepath.Join(info.parts[start:]...)
 }
 
