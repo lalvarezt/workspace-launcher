@@ -870,7 +870,7 @@ func applyLayoutWidths(cfg *config) {
 	if ageColumnWidth == 0 {
 		ageColumnWidth = ageWidth
 	}
-	ageColumnWidth = normalizeAgeColumnWidth(ageColumnWidth)
+	ageTwoColumnWidth, ageOneColumnWidth := compactAgeColumnWidths(ageColumnWidth)
 
 	reservedWidth := chromeWidth + ageColumnWidth
 	if cfg.showLanguage {
@@ -894,7 +894,7 @@ func applyLayoutWidths(cfg *config) {
 		deficit -= shrink
 	}
 	if deficit > 0 {
-		ageColumnWidth = shrinkAgeColumnWidth(ageColumnWidth, deficit)
+		ageColumnWidth = shrinkAgeColumnWidth(ageColumnWidth, ageTwoColumnWidth, ageOneColumnWidth, deficit)
 	}
 	if deficit > 0 {
 		reservedWidth = chromeWidth + ageColumnWidth
@@ -1986,26 +1986,32 @@ func computeAgeColumnWidth(now int64, details []repoDetails) int {
 	return width
 }
 
-func normalizeAgeColumnWidth(width int) int {
-	switch {
-	case width >= ageWidth:
-		return width
-	case width >= ageTwoWidth:
-		return ageTwoWidth
-	default:
-		return ageOneWidth
+func compactAgeColumnWidths(fullWidth int) (int, int) {
+	if fullWidth < ageWidth {
+		fullWidth = ageWidth
 	}
+
+	twoBlockWidth := fullWidth - 4
+	if twoBlockWidth < ageTwoWidth {
+		twoBlockWidth = ageTwoWidth
+	}
+
+	oneBlockWidth := fullWidth - 8
+	if oneBlockWidth < ageOneWidth {
+		oneBlockWidth = ageOneWidth
+	}
+
+	return twoBlockWidth, oneBlockWidth
 }
 
-func shrinkAgeColumnWidth(width, deficit int) int {
-	width = normalizeAgeColumnWidth(width)
+func shrinkAgeColumnWidth(width, twoBlockWidth, oneBlockWidth, deficit int) int {
 	for deficit > 0 {
 		next := width
 		switch {
-		case width > ageTwoWidth:
-			next = ageTwoWidth
-		case width > ageOneWidth:
-			next = ageOneWidth
+		case width > twoBlockWidth:
+			next = twoBlockWidth
+		case width > oneBlockWidth:
+			next = oneBlockWidth
 		default:
 			return width
 		}
@@ -2163,31 +2169,38 @@ func renderAgeFieldStyled(age string, width int, styled bool) string {
 		return ""
 	}
 
-	render := func(text string) string {
+	render := func(text string, trailingPad bool) string {
 		if width == 1 {
 			return paintFieldStyled(styled, cTime, fitFieldRight(text, width))
 		}
-		return paintFieldStyled(styled, cTime, fitFieldRight(text, width-1)+" ")
+		if trailingPad {
+			return paintFieldStyled(styled, cTime, fitFieldRight(text, width-1)+" ")
+		}
+		return paintFieldStyled(styled, cTime, fitFieldRight(text, width))
 	}
 
 	blocks := strings.Fields(age)
-	switch normalizedWidth := normalizeAgeColumnWidth(width); {
-	case normalizedWidth >= ageWidth:
-		return render(age)
-	case normalizedWidth >= ageTwoWidth:
-		limit := 2
-		if len(blocks) < limit {
-			limit = len(blocks)
-		}
-		text := strings.Join(blocks[:limit], " ")
-		return render(text)
-	default:
-		text := age
-		if len(blocks) > 0 {
-			text = blocks[0]
-		}
-		return render(text)
+	candidates := []string{age}
+	if len(blocks) >= 2 {
+		candidates = append(candidates, strings.Join(blocks[:2], " "))
 	}
+	if len(blocks) >= 1 {
+		candidates = append(candidates, blocks[0])
+	}
+
+	for _, candidate := range candidates {
+		if displayWidth(candidate)+1 <= width {
+			return render(candidate, true)
+		}
+		if displayWidth(candidate) <= width {
+			return render(candidate, false)
+		}
+	}
+
+	if len(blocks) == 0 {
+		return render(age, false)
+	}
+	return render(blocks[0], false)
 }
 
 func renderLangFieldStyled(lang string, width int, styled bool) string {
