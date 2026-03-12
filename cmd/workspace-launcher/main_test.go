@@ -1075,6 +1075,37 @@ func TestApplyLayoutWidthsKeepsRootWidthAndShrinksWorkspaceLast(t *testing.T) {
 	}
 }
 
+func TestApplyLayoutWidthsShrinksRootLabelBeforeOverflowingRows(t *testing.T) {
+	cfg := config{
+		cols:            70,
+		showLanguage:    true,
+		showGit:         true,
+		showRoot:        true,
+		ageColumnWidth:  ageWidth,
+		langColumnWidth: langWidth,
+		gitColumnWidth:  24,
+		rootLabelWidth:  40,
+	}
+
+	applyLayoutWidths(&cfg)
+
+	if cfg.nameWidth != nameMinWidth {
+		t.Fatalf("expected workspace column to stay at minimum width, got %d", cfg.nameWidth)
+	}
+	if cfg.rootLabelWidth != 27 {
+		t.Fatalf("expected root label to shrink to absorb the remaining deficit, got %d", cfg.rootLabelWidth)
+	}
+
+	totalWidth := chromeWidth + cfg.ageColumnWidth
+	totalWidth += cfg.langColumnWidth + gapWidth
+	totalWidth += cfg.gitColumnWidth + gapWidth
+	totalWidth += cfg.rootLabelWidth + gapWidth
+	totalWidth += cfg.nameWidth
+	if totalWidth != cfg.cols {
+		t.Fatalf("expected row width to fit terminal: got %d want %d", totalWidth, cfg.cols)
+	}
+}
+
 func TestComputeNameColumnWidthUsesLongestDirectoryName(t *testing.T) {
 	width := computeNameColumnWidth([]repoDetails{
 		{child: childDir{name: "short"}},

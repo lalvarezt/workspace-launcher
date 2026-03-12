@@ -920,6 +920,14 @@ func applyLayoutWidths(cfg *config) {
 		gitColumnWidth -= shrink
 		deficit -= shrink
 	}
+	if deficit > 0 && cfg.showRoot {
+		shrink := deficit
+		if maxShrink := rootLabelWidth - rootFloorWidth; maxShrink < shrink {
+			shrink = maxShrink
+		}
+		rootLabelWidth -= shrink
+		deficit -= shrink
+	}
 
 	reservedWidth = chromeWidth + ageColumnWidth
 	if cfg.showLanguage {
