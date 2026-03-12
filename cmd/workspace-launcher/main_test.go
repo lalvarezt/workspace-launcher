@@ -1092,6 +1092,18 @@ func TestApplyLayoutWidthsScenarios(t *testing.T) {
 			},
 		},
 		{
+			name: "preserves wider compact age block for triple digit days",
+			cfg: config{
+				cols:           34,
+				nameWidth:      18,
+				ageColumnWidth: ageWidth + 2,
+			},
+			want: config{
+				nameWidth:      18,
+				ageColumnWidth: ageOneWidth + 2,
+			},
+		},
+		{
 			name: "shrinks root label before overflowing rows",
 			cfg: config{
 				cols:            70,
@@ -1229,6 +1241,28 @@ func TestRenderCompactMetadataFields(t *testing.T) {
 		field := renderAgeFieldStyled("01d 02h 03m", ageOneWidth, false)
 		if strings.TrimSpace(field) != "01d" {
 			t.Fatalf("expected single age block, got %q", field)
+		}
+	})
+
+	t.Run("age wide day block falls back cleanly in compact widths", func(t *testing.T) {
+		field := renderAgeFieldStyled("100d 02h 03m", ageTwoWidth, false)
+		if strings.TrimSpace(field) != "100d 02h" {
+			t.Fatalf("expected compact age field without ellipsis, got %q", field)
+		}
+
+		field = renderAgeFieldStyled("100d 02h 03m", ageOneWidth, false)
+		if strings.TrimSpace(field) != "100d" {
+			t.Fatalf("expected triple-digit day block to remain intact, got %q", field)
+		}
+	})
+
+	t.Run("age four digit day block keeps full day block when collapsed", func(t *testing.T) {
+		field := renderAgeFieldStyled("1000d 02h 03m", ageOneWidth+2, false)
+		if strings.TrimRight(field, " ") != "1000d" {
+			t.Fatalf("expected four-digit day block to remain intact, got %q", field)
+		}
+		if got := displayWidth(field); got != ageOneWidth+2 {
+			t.Fatalf("unexpected display width: got %d want %d", got, ageOneWidth+2)
 		}
 	})
 
