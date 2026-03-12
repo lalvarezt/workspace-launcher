@@ -56,11 +56,13 @@ const (
 	rootMaxWidth   = 40
 	rootFloorWidth = 4
 	langWidth      = 12
-	langLabelWidth = langWidth - 4
-	gitMinWidth    = 3
+	langMinWidth   = 2
+	gitMinWidth    = 2
 	gitMaxWidth    = 48
 	nameMinWidth   = 16
 	ageWidth       = 12
+	ageTwoWidth    = 8
+	ageOneWidth    = 4
 	chromeWidth    = 10
 )
 
@@ -88,25 +90,27 @@ const (
 )
 
 type config struct {
-	mode           string
-	shellBindings  bool
-	initialQuery   string
-	fzfStyle       string
-	roots          []string
-	rootLabels     map[string]string
-	jobs           int
-	gitDirty       bool
-	recency        string
-	showLanguage   bool
-	showGit        bool
-	showRoot       bool
-	headlessBench  bool
-	now            int64
-	cwd            string
-	cols           int
-	gitColumnWidth int
-	rootLabelWidth int
-	nameWidth      int
+	mode            string
+	shellBindings   bool
+	initialQuery    string
+	fzfStyle        string
+	roots           []string
+	rootLabels      map[string]string
+	jobs            int
+	gitDirty        bool
+	recency         string
+	showLanguage    bool
+	showGit         bool
+	showRoot        bool
+	headlessBench   bool
+	now             int64
+	cwd             string
+	cols            int
+	ageColumnWidth  int
+	langColumnWidth int
+	gitColumnWidth  int
+	rootLabelWidth  int
+	nameWidth       int
 }
 
 type childDir struct {
@@ -590,6 +594,15 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 }
 
 func renderCandidates(cfg config, details []repoDetails) []candidate {
+	if width := computeNameColumnWidth(details); width > cfg.nameWidth {
+		cfg.nameWidth = width
+	}
+	cfg.ageColumnWidth = ageWidth
+	if cfg.showLanguage {
+		cfg.langColumnWidth = langWidth
+	} else {
+		cfg.langColumnWidth = 0
+	}
 	if cfg.showGit {
 		cfg.gitColumnWidth = computeGitColumnWidth(details)
 	} else {
@@ -610,7 +623,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 			markerField = paintFieldStyled(styled, cCurrent, "*")
 		}
 		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
-		ageField := paintFieldStyled(styled, cTime, fitField(formatAge(cfg.now, detail.epoch), ageWidth))
+		ageField := renderAgeFieldStyled(formatAge(cfg.now, detail.epoch), cfg.ageColumnWidth, styled)
 
 		fields := make([]string, 0, 4)
 		if cfg.showRoot {
@@ -618,7 +631,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		}
 		fields = append(fields, nameField)
 		if cfg.showLanguage {
-			fields = append(fields, renderLangFieldStyled(detail.lang, styled))
+			fields = append(fields, renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
 		}
 		if cfg.showGit {
 			fields = append(fields, renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
@@ -642,9 +655,15 @@ func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {
 		return candidate{}, err
 	}
 	if cfg.cols == 0 {
-		metaWidth := ageWidth
+		if cfg.ageColumnWidth == 0 {
+			cfg.ageColumnWidth = ageWidth
+		}
+		metaWidth := cfg.ageColumnWidth
 		if cfg.showLanguage {
-			metaWidth += langWidth + gapWidth
+			if cfg.langColumnWidth == 0 {
+				cfg.langColumnWidth = langWidth
+			}
+			metaWidth += cfg.langColumnWidth + gapWidth
 		}
 		if cfg.showGit {
 			if cfg.gitColumnWidth == 0 {
@@ -823,24 +842,109 @@ func computeRootLabelWidth(labels map[string]string) int {
 }
 
 func applyLayoutWidths(cfg *config) {
-	metaWidth := ageWidth
+	targetNameWidth := cfg.nameWidth
+	if targetNameWidth < nameMinWidth {
+		targetNameWidth = nameMinWidth
+	}
+
+	langColumnWidth := 0
 	if cfg.showLanguage {
-		metaWidth += langWidth + gapWidth
-	}
-	if cfg.showGit {
-		metaWidth += cfg.gitColumnWidth + gapWidth
-	}
-	cfg.nameWidth = cfg.cols - chromeWidth - metaWidth
-	if cfg.showRoot {
-		cfg.nameWidth -= cfg.rootLabelWidth + gapWidth
-		if cfg.nameWidth < nameMinWidth {
-			cfg.rootLabelWidth -= nameMinWidth - cfg.nameWidth
-			if cfg.rootLabelWidth < rootFloorWidth {
-				cfg.rootLabelWidth = rootFloorWidth
-			}
-			cfg.nameWidth = cfg.cols - chromeWidth - metaWidth - cfg.rootLabelWidth - gapWidth
+		langColumnWidth = cfg.langColumnWidth
+		if langColumnWidth == 0 {
+			langColumnWidth = langWidth
 		}
 	}
+
+	gitColumnWidth := 0
+	if cfg.showGit {
+		gitColumnWidth = cfg.gitColumnWidth
+		if gitColumnWidth == 0 {
+			gitColumnWidth = gitMinWidth
+		}
+	}
+
+	rootLabelWidth := 0
+	if cfg.showRoot {
+		rootLabelWidth = cfg.rootLabelWidth
+	}
+
+	ageColumnWidth := cfg.ageColumnWidth
+	if ageColumnWidth == 0 {
+		ageColumnWidth = ageWidth
+	}
+	ageColumnWidth = normalizeAgeColumnWidth(ageColumnWidth)
+
+	reservedWidth := chromeWidth + ageColumnWidth
+	if cfg.showLanguage {
+		reservedWidth += langColumnWidth + gapWidth
+	}
+	if cfg.showGit {
+		reservedWidth += gitColumnWidth + gapWidth
+	}
+	if cfg.showRoot {
+		reservedWidth += rootLabelWidth + gapWidth
+	}
+
+	nameWidth := cfg.cols - reservedWidth
+	deficit := targetNameWidth - nameWidth
+	if deficit > 0 && cfg.showLanguage {
+		shrink := deficit
+		if maxShrink := langColumnWidth - langMinWidth; maxShrink < shrink {
+			shrink = maxShrink
+		}
+		langColumnWidth -= shrink
+		deficit -= shrink
+	}
+	if deficit > 0 {
+		ageColumnWidth = shrinkAgeColumnWidth(ageColumnWidth, deficit)
+	}
+	if deficit > 0 {
+		reservedWidth = chromeWidth + ageColumnWidth
+		if cfg.showLanguage {
+			reservedWidth += langColumnWidth + gapWidth
+		}
+		if cfg.showGit {
+			reservedWidth += gitColumnWidth + gapWidth
+		}
+		if cfg.showRoot {
+			reservedWidth += rootLabelWidth + gapWidth
+		}
+		nameWidth = cfg.cols - reservedWidth
+		deficit = targetNameWidth - nameWidth
+	}
+	if deficit > 0 && cfg.showGit {
+		shrink := deficit
+		if maxShrink := gitColumnWidth - gitMinWidth; maxShrink < shrink {
+			shrink = maxShrink
+		}
+		gitColumnWidth -= shrink
+		deficit -= shrink
+	}
+	if deficit > 0 && cfg.showRoot {
+		shrink := deficit
+		if maxShrink := rootLabelWidth - rootFloorWidth; maxShrink < shrink {
+			shrink = maxShrink
+		}
+		rootLabelWidth -= shrink
+		deficit -= shrink
+	}
+
+	reservedWidth = chromeWidth + ageColumnWidth
+	if cfg.showLanguage {
+		reservedWidth += langColumnWidth + gapWidth
+	}
+	if cfg.showGit {
+		reservedWidth += gitColumnWidth + gapWidth
+	}
+	if cfg.showRoot {
+		reservedWidth += rootLabelWidth + gapWidth
+	}
+
+	cfg.ageColumnWidth = ageColumnWidth
+	cfg.langColumnWidth = langColumnWidth
+	cfg.gitColumnWidth = gitColumnWidth
+	cfg.rootLabelWidth = rootLabelWidth
+	cfg.nameWidth = cfg.cols - reservedWidth
 	if cfg.nameWidth < nameMinWidth {
 		cfg.nameWidth = nameMinWidth
 	}
@@ -856,6 +960,17 @@ func computeGitColumnWidth(details []repoDetails) int {
 	}
 	if longest > gitMaxWidth {
 		return gitMaxWidth
+	}
+	return longest
+}
+
+func computeNameColumnWidth(details []repoDetails) int {
+	longest := nameMinWidth
+	for _, detail := range details {
+		width := displayWidth(detail.child.name)
+		if width > longest {
+			longest = width
+		}
 	}
 	return longest
 }
@@ -935,7 +1050,7 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 	if wantEpoch {
 		layout, layoutErr := finalizeGitLayout(gitDir)
 		if layoutErr == nil {
-			head, headErr := readHead(layout)
+			head, headErr := readHeadFile(layout.gitDir)
 			if headErr == nil {
 				if wantBranch {
 					meta.branchLabel = formatHeadLabel(head)
@@ -994,7 +1109,7 @@ func classifyLinkedGitDir(gitDir string, isWorktree bool) (bool, bool) {
 func gitLastCommitEpochFast(dir string) (int64, error) {
 	layout, err := resolveGitLayout(dir)
 	if err == nil {
-		head, headErr := readHead(layout)
+		head, headErr := readHeadFile(layout.gitDir)
 		if headErr == nil {
 			headHash, resolveErr := resolveHeadHashFromHead(layout, head)
 			if resolveErr == nil {
@@ -1081,10 +1196,6 @@ func finalizeGitLayout(gitDir string) (gitLayout, error) {
 	return layout, nil
 }
 
-func readHead(layout gitLayout) (string, error) {
-	return readHeadFile(layout.gitDir)
-}
-
 func readHeadFile(gitDir string) (string, error) {
 	content, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
@@ -1098,7 +1209,7 @@ func readHeadFile(gitDir string) (string, error) {
 }
 
 func resolveHeadHash(layout gitLayout) (string, error) {
-	head, err := readHead(layout)
+	head, err := readHeadFile(layout.gitDir)
 	if err != nil {
 		return "", err
 	}
@@ -1482,7 +1593,7 @@ func pickRepoHeadless(cfg config, candidates []candidate) (pickerResult, error) 
 	for _, cand := range candidates {
 		line := serializeCandidate(cand)
 		if query == "" || strings.Contains(strings.ToLower(candidateSearchText(cand)), query) {
-			return pickerResult{selection: line, createRoot: readHeadlessCreateRoot(cfg)}, nil
+			return pickerResult{selection: line, createRoot: defaultCreateRoot(cfg)}, nil
 		}
 	}
 	return pickerResult{}, exitCodeError{code: 1}
@@ -1645,10 +1756,6 @@ func readPickerCreateRoot(cfg config, state pickerState) string {
 			return root
 		}
 	}
-	return defaultCreateRoot(cfg)
-}
-
-func readHeadlessCreateRoot(cfg config) string {
 	return defaultCreateRoot(cfg)
 }
 
@@ -1867,6 +1974,35 @@ func formatAge(now, epoch int64) string {
 	return fmt.Sprintf("%02dd %02dh %02dm", days, hours, mins)
 }
 
+func normalizeAgeColumnWidth(width int) int {
+	switch {
+	case width >= ageWidth:
+		return ageWidth
+	case width >= ageTwoWidth:
+		return ageTwoWidth
+	default:
+		return ageOneWidth
+	}
+}
+
+func shrinkAgeColumnWidth(width, deficit int) int {
+	width = normalizeAgeColumnWidth(width)
+	for deficit > 0 {
+		next := width
+		switch width {
+		case ageWidth:
+			next = ageTwoWidth
+		case ageTwoWidth:
+			next = ageOneWidth
+		default:
+			return width
+		}
+		deficit -= width - next
+		width = next
+	}
+	return width
+}
+
 func isCurrentRepo(cwd, dir string) bool {
 	return cwd == dir || strings.HasPrefix(cwd, dir+string(filepath.Separator))
 }
@@ -1965,10 +2101,6 @@ func trimDisplayWidth(text string, maxWidth int) string {
 	return b.String()
 }
 
-func paintField(color, text string) string {
-	return paintFieldStyled(true, color, text)
-}
-
 func paintFieldStyled(styled bool, color, text string) string {
 	if !styled {
 		return text
@@ -2003,11 +2135,32 @@ func computeFooterRootWidth(labels map[string]string) int {
 	return longest
 }
 
-func renderLangField(lang string) string {
-	return renderLangFieldStyled(lang, true)
+func renderAgeFieldStyled(age string, width int, styled bool) string {
+	if width <= 0 {
+		return ""
+	}
+
+	blocks := strings.Fields(age)
+	switch normalizedWidth := normalizeAgeColumnWidth(width); {
+	case normalizedWidth >= ageWidth:
+		return paintFieldStyled(styled, cTime, fitField(age, width))
+	case normalizedWidth >= ageTwoWidth:
+		limit := 2
+		if len(blocks) < limit {
+			limit = len(blocks)
+		}
+		text := strings.Join(blocks[:limit], " ")
+		return paintFieldStyled(styled, cTime, fitField(text, width))
+	default:
+		text := age
+		if len(blocks) > 0 {
+			text = blocks[0]
+		}
+		return paintFieldStyled(styled, cTime, fitField(text, width))
+	}
 }
 
-func renderLangFieldStyled(lang string, styled bool) string {
+func renderLangFieldStyled(lang string, width int, styled bool) string {
 	icon := "•"
 	label := "Misc"
 	color := cMisc
@@ -2033,7 +2186,10 @@ func renderLangFieldStyled(lang string, styled bool) string {
 	if icon == "•" {
 		iconCell = "•  "
 	}
-	return paintFieldStyled(styled, color, iconCell+fitField(label, langLabelWidth))
+	if width <= 0 {
+		return ""
+	}
+	return paintFieldStyled(styled, color, fitField(iconCell+label, width))
 }
 
 func gitFieldText(meta gitMeta, branch string) string {
@@ -2056,10 +2212,6 @@ func gitFieldText(meta gitMeta, branch string) string {
 		text += "  " + branch
 	}
 	return text
-}
-
-func renderGitField(meta gitMeta, branch string, width int) string {
-	return renderGitFieldStyled(meta, branch, width, true)
 }
 
 func renderGitFieldStyled(meta gitMeta, branch string, width int, styled bool) string {
