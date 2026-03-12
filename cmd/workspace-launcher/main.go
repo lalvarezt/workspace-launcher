@@ -594,9 +594,7 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 }
 
 func renderCandidates(cfg config, details []repoDetails) []candidate {
-	if width := computeNameColumnWidth(details); width > cfg.nameWidth {
-		cfg.nameWidth = width
-	}
+	cfg.nameWidth = computeNameColumnWidth(details)
 	cfg.ageColumnWidth = ageWidth
 	if cfg.showLanguage {
 		cfg.langColumnWidth = langWidth
