@@ -114,6 +114,7 @@ type repoDetails struct {
 	lang      string
 	git       gitMeta
 	matchText string
+	ageText   string
 	epoch     int64
 }
 

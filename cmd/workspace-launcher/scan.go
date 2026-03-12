@@ -124,6 +124,7 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 		lang:      lang,
 		git:       git,
 		matchText: child.name,
+		ageText:   formatAge(cfg.now, epoch),
 		epoch:     epoch,
 	}, nil
 }
@@ -157,7 +158,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 			markerField = paintFieldStyled(styled, cCurrent, "*")
 		}
 		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
-		ageField := renderAgeFieldStyled(formatAge(cfg.now, detail.epoch), cfg.ageColumnWidth, styled)
+		ageField := renderAgeFieldStyled(detail.ageText, cfg.ageColumnWidth, styled)
 
 		fields := make([]string, 0, 4)
 		if cfg.showRoot {
