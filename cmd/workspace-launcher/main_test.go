@@ -370,6 +370,20 @@ func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
 	}
 }
 
+func TestPickRepoReturnsEmptyOnSuccessfulBlankOutput(t *testing.T) {
+	fzfPath := writeTestScript(t, "#!/bin/sh\nexit 0\n")
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+
+	result, err := pickRepo(config{roots: []string{rootA, rootB}}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	if err != nil {
+		t.Fatalf("pickRepo returned error: %v", err)
+	}
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on successful blank output, got %+v", result)
+	}
+}
+
 func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	quotedArgsPath := "'" + strings.ReplaceAll(argsPath, "'", "'\\''") + "'"

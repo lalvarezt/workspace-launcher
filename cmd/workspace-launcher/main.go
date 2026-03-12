@@ -1436,6 +1436,9 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (pickerResult,
 		return pickerResult{}, waitErr
 	}
 	result := parsePickerResult(stdout.String())
+	if result == (pickerResult{}) {
+		return pickerResult{}, nil
+	}
 	result.createRoot = readPickerCreateRoot(cfg, state)
 	return result, nil
 }
