@@ -30,6 +30,12 @@ const appName = "workspace-launcher"
 var version = "dev"
 
 const (
+	activeRootAll      = "__workspace_launcher_all__"
+	activeRootAllLabel = "All roots"
+	footerRootMaxWidth = 20
+)
+
+const (
 	modePath = "path"
 	modeBash = "bash"
 	modeZsh  = "zsh"
@@ -63,6 +69,8 @@ const (
 	cDim       = "\033[38;5;244m"
 	cName      = "\033[38;5;252m"
 	cCurrent   = "\033[38;5;223m"
+	cRootText  = "\033[38;5;235m"
+	cRootBadge = "\033[48;5;151m"
 	cGo        = "\033[38;5;81m"
 	cRust      = "\033[38;5;209m"
 	cPython    = "\033[38;5;221m"
@@ -115,6 +123,13 @@ type candidate struct {
 	matchText  string
 	branchText string
 	epoch      int64
+}
+
+type pickerResult struct {
+	query      string
+	key        string
+	selection  string
+	createRoot string
 }
 
 type repoDetails struct {
@@ -211,12 +226,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if result == "" {
+	if result == (pickerResult{}) {
 		return exitCodeError{code: 0}
 	}
 
-	key, selection := splitResult(result)
-	target, err := resolveSelection(cfg, key, selection)
+	target, err := resolveSelection(cfg, result)
 	if err != nil {
 		return err
 	}
@@ -360,6 +374,8 @@ func printUsage() {
 
 Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
+In multi-root mode, creation uses the current root. Ctrl-R cycles that root, and
+the footer shows the active target.
 
 Options:
   --bash           Print bash shell integration
@@ -1256,46 +1272,109 @@ func gitIsDirty(dir string) (bool, error) {
 	return len(bytes.TrimSpace(output)) > 0, nil
 }
 
-func pickRepo(cfg config, fzfPath string, candidates []candidate) (string, error) {
+type pickerState struct {
+	dir            string
+	rootFile       string
+	footerFile     string
+	candidatesFile string
+	cycleFile      string
+	filterFile     string
+}
+
+func pickRepo(cfg config, fzfPath string, candidates []candidate) (pickerResult, error) {
 	if cfg.headlessBench {
 		return pickRepoHeadless(cfg, candidates)
 	}
 
-	args := baseFzfArgs(cfg)
-	args = append(args, fzfStyleArgs(cfg.fzfStyle)...)
+	state, err := createPickerState(cfg, candidates)
+	if err != nil {
+		return pickerResult{}, err
+	}
+	if state.dir != "" {
+		defer os.RemoveAll(state.dir)
+	}
+
+	args := baseFzfArgs(cfg, state)
+	args = append(args, fzfStyleArgs(cfg, state)...)
 	cmd := exec.Command(fzfPath, args...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return "", err
+		return pickerResult{}, err
 	}
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return "", err
+		return pickerResult{}, err
 	}
 
 	writeErr := writeCandidates(stdin, candidates)
 	waitErr := cmd.Wait()
 	if isPickerAbort(waitErr) {
 		if writeErr == nil || isClosedPickerPipe(writeErr) {
-			return "", nil
+			return pickerResult{}, nil
 		}
-		return "", writeErr
+		return pickerResult{}, writeErr
 	}
 	if writeErr != nil {
-		return "", writeErr
+		return pickerResult{}, writeErr
 	}
 	if waitErr != nil {
-		return "", waitErr
+		return pickerResult{}, waitErr
 	}
-	return strings.TrimRight(stdout.String(), "\n"), nil
+	result := parsePickerResult(stdout.String())
+	result.createRoot = readPickerCreateRoot(cfg, state)
+	return result, nil
 }
 
-func baseFzfArgs(cfg config) []string {
-	return []string{
+func createPickerState(cfg config, candidates []candidate) (pickerState, error) {
+	if len(cfg.roots) < 2 {
+		return pickerState{}, nil
+	}
+
+	dir, err := os.MkdirTemp("", "workspace-launcher-fzf-*")
+	if err != nil {
+		return pickerState{}, err
+	}
+
+	state := pickerState{
+		dir:            dir,
+		rootFile:       filepath.Join(dir, "active-root"),
+		footerFile:     filepath.Join(dir, "footer"),
+		candidatesFile: filepath.Join(dir, "candidates"),
+		cycleFile:      filepath.Join(dir, "cycle-root.sh"),
+		filterFile:     filepath.Join(dir, "filter-root.sh"),
+	}
+
+	initialRoot := activeRootAll
+	if err := os.WriteFile(state.rootFile, []byte(initialRoot), 0o600); err != nil {
+		os.RemoveAll(dir)
+		return pickerState{}, err
+	}
+	if err := os.WriteFile(state.footerFile, []byte(createFooterText(cfg, initialRoot)), 0o600); err != nil {
+		os.RemoveAll(dir)
+		return pickerState{}, err
+	}
+	if err := writeCandidateFile(state.candidatesFile, candidates); err != nil {
+		os.RemoveAll(dir)
+		return pickerState{}, err
+	}
+	if err := os.WriteFile(state.cycleFile, []byte(buildCycleRootScript(cfg)), 0o700); err != nil {
+		os.RemoveAll(dir)
+		return pickerState{}, err
+	}
+	if err := os.WriteFile(state.filterFile, []byte(buildFilterCandidatesScript()), 0o700); err != nil {
+		os.RemoveAll(dir)
+		return pickerState{}, err
+	}
+
+	return state, nil
+}
+
+func baseFzfArgs(cfg config, state pickerState) []string {
+	args := []string{
 		"--scheme=history",
 		"--layout=reverse",
 		"--tabstop=1",
@@ -1303,15 +1382,33 @@ func baseFzfArgs(cfg config) []string {
 		"--delimiter=\t",
 		"--with-nth=5..",
 		"--nth=" + fzfSearchNth(cfg),
-		"--expect=ctrl-e",
+		"--print-query",
+		"--expect=ctrl-e,ctrl-n",
 		"--query=" + cfg.initialQuery,
 		"--bind=enter:accept-or-print-query",
-		"--bind=ctrl-n:print-query+accept",
 	}
+
+	if state.cycleFile != "" {
+		args = append(args,
+			"--bind=ctrl-r:execute-silent("+shellSingleQuote(state.cycleFile)+" "+shellSingleQuote(state.rootFile)+" "+shellSingleQuote(state.footerFile)+")+reload("+shellSingleQuote(state.filterFile)+" "+shellSingleQuote(state.rootFile)+" "+shellSingleQuote(state.candidatesFile)+")+transform-footer(cat "+shellSingleQuote(state.footerFile)+")",
+		)
+	}
+
+	return args
 }
 
-func fzfStyleArgs(style string) []string {
-	switch effectiveFzfStyle(style) {
+func fzfStyleArgs(cfg config, state pickerState) []string {
+	footerText := defaultFooterText()
+	if state.footerFile != "" {
+		footerText = createFooterText(cfg, activeRootAll)
+	}
+
+	ghostText := "Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create"
+	if state.cycleFile != "" {
+		ghostText += ", Ctrl-R to switch root"
+	}
+
+	switch effectiveFzfStyle(cfg.fzfStyle) {
 	case fzfStyleFull:
 		return []string{
 			"--ansi",
@@ -1320,14 +1417,14 @@ func fzfStyleArgs(style string) []string {
 			"--color=bg:-1,bg+:#1d252c,fg:#d8d0c4,fg+:#f6efe2",
 			"--color=hl:#e0a65b,hl+:#ffd08a,prompt:#8ecfd0,query:#f6efe2,ghost:#6d7d88",
 			"--color=border:#50606b,label:#91c7c8,list-border:#5d7282,list-label:#a4d5d6",
-			"--color=input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c,footer-label:#87b69f",
+			"--color=input-border:#8a6c4f,input-label:#efbf7a,footer-border:#44515c",
 			"--color=pointer:#efbf7a,separator:#36434d,scrollbar:#55636e",
-			"--ghost=Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create",
+			"--ghost=" + ghostText,
 			"--input-border",
 			"--input-label= Search/New ",
 			"--list-border",
 			"--list-label= Folders ",
-			"--footer=Enter open | Ctrl-E edit | Ctrl-N create | Esc quit",
+			"--footer=" + footerText,
 			"--footer-border=line",
 			"--bind=result:transform-list-label:printf \" Folders (%s) \" \"$FZF_MATCH_COUNT\"",
 		}
@@ -1336,12 +1433,12 @@ func fzfStyleArgs(style string) []string {
 			"--ansi",
 			"--prompt=",
 			"--pointer=▌",
-			"--ghost=Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create",
+			"--ghost=" + ghostText,
 			"--input-border",
 			"--input-label= Search/New ",
 			"--list-border",
 			"--list-label= Folders ",
-			"--footer=Enter open | Ctrl-E edit | Ctrl-N create | Esc quit",
+			"--footer=" + footerText,
 			"--footer-border=line",
 			"--bind=result:transform-list-label:printf \" Folders (%s) \" \"$FZF_MATCH_COUNT\"",
 		}
@@ -1380,20 +1477,39 @@ func fzfSearchNth(cfg config) string {
 	return strings.Join(columns, ",")
 }
 
-func pickRepoHeadless(cfg config, candidates []candidate) (string, error) {
+func pickRepoHeadless(cfg config, candidates []candidate) (pickerResult, error) {
 	query := strings.ToLower(cfg.initialQuery)
 	for _, cand := range candidates {
 		line := serializeCandidate(cand)
 		if query == "" || strings.Contains(strings.ToLower(candidateSearchText(cand)), query) {
-			return line, nil
+			return pickerResult{selection: line, createRoot: readHeadlessCreateRoot(cfg)}, nil
 		}
 	}
-	return "", exitCodeError{code: 1}
+	return pickerResult{}, exitCodeError{code: 1}
 }
 
 func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 	defer w.Close()
 	buf := bufio.NewWriterSize(w, 1<<20)
+	for _, cand := range candidates {
+		if _, err := buf.WriteString(serializeCandidate(cand)); err != nil {
+			return err
+		}
+		if err := buf.WriteByte('\n'); err != nil {
+			return err
+		}
+	}
+	return buf.Flush()
+}
+
+func writeCandidateFile(path string, candidates []candidate) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	buf := bufio.NewWriterSize(file, 1<<20)
 	for _, cand := range candidates {
 		if _, err := buf.WriteString(serializeCandidate(cand)); err != nil {
 			return err
@@ -1432,37 +1548,219 @@ func branchSearchText(branch string) string {
 	return branch
 }
 
-func splitResult(result string) (string, string) {
-	parts := strings.SplitN(result, "\n", 2)
-	if len(parts) == 2 && (parts[0] == "" || strings.HasPrefix(parts[0], "ctrl-")) {
-		return parts[0], parts[1]
-	}
-	return "", result
+func defaultFooterText() string {
+	return "Enter open | Ctrl-E edit | Ctrl-N create | Esc quit"
 }
 
-func resolveSelection(cfg config, key, selection string) (string, error) {
+func createFooterText(cfg config, root string) string {
+	if len(cfg.roots) < 2 {
+		return defaultFooterText()
+	}
+
+	return renderFooterRootBadge(cfg, root) + "  Enter open | Ctrl-E edit | Ctrl-N create | Ctrl-R switch root | Esc quit"
+}
+
+func pickerRootLabel(cfg config, root string) string {
+	if root == activeRootAll {
+		return activeRootAllLabel
+	}
+	if cfg.rootLabels != nil {
+		if label := cfg.rootLabels[root]; label != "" {
+			return label
+		}
+	}
+	base := filepath.Base(root)
+	if base != "." && base != string(filepath.Separator) && base != "" {
+		return base
+	}
+	return root
+}
+
+func buildCycleRootScript(cfg config) string {
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\nset -eu\n")
+	b.WriteString("root_file=$1\n")
+	b.WriteString("footer_file=$2\n")
+	fmt.Fprintf(&b, "current=%s\n", shellSingleQuote(activeRootAll))
+	b.WriteString("if [ -f \"$root_file\" ]; then\n")
+	b.WriteString("  current=$(cat \"$root_file\")\n")
+	b.WriteString("fi\n")
+	b.WriteString("case \"$current\" in\n")
+	fmt.Fprintf(&b, "  %s)\n", shellSingleQuote(activeRootAll))
+	fmt.Fprintf(&b, "    next_root=%s\n", shellSingleQuote(cfg.roots[0]))
+	fmt.Fprintf(&b, "    next_footer=%s\n", shellSingleQuote(createFooterText(cfg, cfg.roots[0])))
+	b.WriteString("    ;;\n")
+	for i, root := range cfg.roots {
+		nextRoot := activeRootAll
+		if i < len(cfg.roots)-1 {
+			nextRoot = cfg.roots[i+1]
+		}
+		fmt.Fprintf(&b, "  %s)\n", shellSingleQuote(root))
+		fmt.Fprintf(&b, "    next_root=%s\n", shellSingleQuote(nextRoot))
+		fmt.Fprintf(&b, "    next_footer=%s\n", shellSingleQuote(createFooterText(cfg, nextRoot)))
+		b.WriteString("    ;;\n")
+	}
+	fmt.Fprintf(&b, "  *)\n    next_root=%s\n    next_footer=%s\n    ;;\n", shellSingleQuote(activeRootAll), shellSingleQuote(createFooterText(cfg, activeRootAll)))
+	b.WriteString("esac\n")
+	b.WriteString("printf '%s' \"$next_root\" > \"$root_file\"\n")
+	b.WriteString("printf '%s' \"$next_footer\" > \"$footer_file\"\n")
+	return b.String()
+}
+
+func buildFilterCandidatesScript() string {
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\nset -eu\n")
+	b.WriteString("root_file=$1\n")
+	b.WriteString("candidates_file=$2\n")
+	fmt.Fprintf(&b, "active_root=%s\n", shellSingleQuote(activeRootAll))
+	b.WriteString("if [ -f \"$root_file\" ]; then\n")
+	b.WriteString("  active_root=$(cat \"$root_file\")\n")
+	b.WriteString("fi\n")
+	fmt.Fprintf(&b, "if [ \"$active_root\" = %s ]; then\n", shellSingleQuote(activeRootAll))
+	b.WriteString("  cat \"$candidates_file\"\n")
+	b.WriteString("  exit 0\n")
+	b.WriteString("fi\n")
+	b.WriteString("awk -F '\\t' -v root=\"$active_root\" 'index($1, root \"/\") == 1 || $1 == root { print }' \"$candidates_file\"\n")
+	return b.String()
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func readPickerCreateRoot(cfg config, state pickerState) string {
+	if state.rootFile == "" {
+		return defaultCreateRoot(cfg)
+	}
+	content, err := os.ReadFile(state.rootFile)
+	if err != nil {
+		return defaultCreateRoot(cfg)
+	}
+	root := strings.TrimSpace(string(content))
+	if root == activeRootAll {
+		return activeRootAll
+	}
+	for _, configuredRoot := range cfg.roots {
+		if root == configuredRoot {
+			return root
+		}
+	}
+	return defaultCreateRoot(cfg)
+}
+
+func readHeadlessCreateRoot(cfg config) string {
+	return defaultCreateRoot(cfg)
+}
+
+func parsePickerResult(result string) pickerResult {
+	result = strings.TrimRight(result, "\n")
+	if result == "" {
+		return pickerResult{}
+	}
+
+	lines := strings.Split(result, "\n")
+	if len(lines) == 1 {
+		if strings.Contains(lines[0], "\t") {
+			return pickerResult{selection: lines[0]}
+		}
+		return pickerResult{query: lines[0]}
+	}
+
+	parsed := pickerResult{query: lines[0]}
+	lines = lines[1:]
+	if len(lines) == 0 {
+		return parsed
+	}
+	if lines[0] == "" || isPickerKey(lines[0]) {
+		parsed.key = lines[0]
+		lines = lines[1:]
+	}
+	if len(lines) > 0 {
+		parsed.selection = lines[0]
+	}
+	return parsed
+}
+
+func isPickerKey(key string) bool {
 	switch key {
+	case "ctrl-e", "ctrl-n":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveSelection(cfg config, result pickerResult) (string, error) {
+	switch result.key {
 	case "ctrl-e":
-		if !strings.Contains(selection, "\t") {
+		target, ok := selectedPath(result.selection)
+		if !ok {
 			return "", errors.New("no directory selected")
 		}
-		target := strings.SplitN(selection, "\t", 2)[0]
 		return "", openInEditor(target)
+	case "ctrl-n":
+		return createWorkspace(cfg, result.query, result.createRoot)
 	case "":
-		if strings.Contains(selection, "\t") {
-			return strings.SplitN(selection, "\t", 2)[0], nil
+		if target, ok := selectedPath(result.selection); ok {
+			return target, nil
 		}
-		if err := validateNewName(selection); err != nil {
-			return "", err
+		name := result.query
+		if name == "" {
+			name = result.selection
 		}
-		target := filepath.Join(cfg.roots[0], selection)
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return "", err
-		}
-		return target, nil
+		return createWorkspace(cfg, name, result.createRoot)
 	default:
-		return "", fmt.Errorf("unknown key: %s", key)
+		return "", fmt.Errorf("unknown key: %s", result.key)
 	}
+}
+
+func selectedPath(selection string) (string, bool) {
+	if !strings.Contains(selection, "\t") {
+		return "", false
+	}
+	return strings.SplitN(selection, "\t", 2)[0], true
+}
+
+func createWorkspace(cfg config, name, currentRoot string) (string, error) {
+	if err := validateNewName(name); err != nil {
+		return "", err
+	}
+
+	root, err := resolveCreateRoot(cfg, currentRoot)
+	if err != nil {
+		return "", err
+	}
+
+	target := filepath.Join(root, name)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func defaultCreateRoot(cfg config) string {
+	if len(cfg.roots) == 0 {
+		return ""
+	}
+	return cfg.roots[0]
+}
+
+func resolveCreateRoot(cfg config, currentRoot string) (string, error) {
+	if currentRoot == activeRootAll {
+		return defaultCreateRoot(cfg), nil
+	}
+
+	for _, configuredRoot := range cfg.roots {
+		if currentRoot == configuredRoot {
+			return configuredRoot, nil
+		}
+	}
+
+	if len(cfg.roots) == 1 {
+		return defaultCreateRoot(cfg), nil
+	}
+
+	return "", errors.New("no active create root selected")
 }
 
 func validateNewName(name string) error {
@@ -1588,6 +1886,23 @@ func fitField(text string, width int) string {
 	return trimmed + strings.Repeat(" ", width-displayWidth(trimmed))
 }
 
+func centerField(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	fitted := fitField(text, width)
+	trimmed := strings.TrimRight(fitted, " ")
+	visibleWidth := displayWidth(trimmed)
+	if visibleWidth >= width {
+		return fitted
+	}
+
+	leftPad := (width - visibleWidth) / 2
+	rightPad := width - visibleWidth - leftPad
+	return strings.Repeat(" ", leftPad) + trimmed + strings.Repeat(" ", rightPad)
+}
+
 func joinDisplayFields(fields []string) string {
 	if len(fields) == 0 {
 		return ""
@@ -1659,6 +1974,33 @@ func paintFieldStyled(styled bool, color, text string) string {
 		return text
 	}
 	return color + text + cReset
+}
+
+func renderFooterRootBadge(cfg config, root string) string {
+	label := pickerRootLabel(cfg, root)
+	width := computeFooterRootWidth(cfg.rootLabels)
+	if width == 0 {
+		width = footerRootMaxWidth
+	}
+	text := " " + centerField(label, width) + " "
+	if effectiveFzfStyle(cfg.fzfStyle) == fzfStylePlain {
+		return text
+	}
+	return cRootText + cRootBadge + text + cReset
+}
+
+func computeFooterRootWidth(labels map[string]string) int {
+	longest := displayWidth(activeRootAllLabel)
+	for _, label := range labels {
+		width := displayWidth(label)
+		if width > longest {
+			longest = width
+		}
+	}
+	if longest > footerRootMaxWidth {
+		return footerRootMaxWidth
+	}
+	return longest
 }
 
 func renderLangField(lang string) string {

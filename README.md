@@ -29,6 +29,7 @@ trees such as `~/.config` or `~/src`.
 - Inline metadata for age, detected language, and git/worktree metadata.
 - `Ctrl-N` creates a new directory from the active query.
 - `Ctrl-E` opens the selected directory in `$VISUAL` or `$EDITOR`.
+- `Ctrl-R` cycles the active create root in multi-root mode.
 - Supports native bash, zsh, and fish shell integration.
 
 ## Requirements
@@ -136,6 +137,7 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 - `Enter`: select the current match
 - `Ctrl-N`: create a new directory from the current query
 - `Ctrl-E`: open the selected directory in `$VISUAL` or `$EDITOR`
+- `Ctrl-R`: cycle the active create root in multi-root mode
 - `Esc`: quit
 
 ## Picker Styling
@@ -260,7 +262,8 @@ go run ./cmd/bench-setup
 - The launcher only scans the direct children of the selected roots.
 - When multiple roots are configured, the picker shows the shortest unique root label on the left.
 - Multi-root filtering only matches workspace names, not the root-context column.
-- When multiple roots are configured, `Ctrl-N` creates a new directory under the first root.
+- When multiple roots are configured, the footer shows the active create root and `Ctrl-R` cycles it.
+- In multi-root mode, create actions use the active create root.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
 

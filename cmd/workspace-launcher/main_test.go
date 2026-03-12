@@ -310,8 +310,8 @@ func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/b\tbeta\t\t\tbeta" {
-		t.Fatalf("unexpected selection: %q", got)
+	if got.selection != "/tmp/b\tbeta\t\t\tbeta" {
+		t.Fatalf("unexpected selection: %q", got.selection)
 	}
 }
 
@@ -326,8 +326,8 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/a\talpha\t\t\talpha" {
-		t.Fatalf("unexpected filtered selection: %q", got)
+	if got.selection != "/tmp/a\talpha\t\t\talpha" {
+		t.Fatalf("unexpected filtered selection: %q", got.selection)
 	}
 }
 
@@ -353,8 +353,8 @@ func TestPickRepoHeadlessMatchesBranchField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepoHeadless returned error: %v", err)
 	}
-	if got != "/tmp/repo\trepo\t\tfeature/worktree-ui\trepo" {
-		t.Fatalf("unexpected branch selection: %q", got)
+	if got.selection != "/tmp/repo\trepo\t\tfeature/worktree-ui\trepo" {
+		t.Fatalf("unexpected branch selection: %q", got.selection)
 	}
 }
 
@@ -365,8 +365,8 @@ func TestPickRepoReturnsEmptyOnAbortExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}
-	if result != "" {
-		t.Fatalf("expected empty result on abort, got %q", result)
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on abort, got %+v", result)
 	}
 }
 
@@ -374,13 +374,24 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	quotedArgsPath := "'" + strings.ReplaceAll(argsPath, "'", "'\\''") + "'"
 	fzfPath := writeTestScript(t, "#!/bin/sh\nprintf '%s\n' \"$@\" > "+quotedArgsPath+"\nexit 130\n")
+	rootA := t.TempDir()
+	rootB := t.TempDir()
 
-	result, err := pickRepo(config{showRoot: true, showLanguage: true, showGit: true}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
+	result, err := pickRepo(config{
+		showRoot:     true,
+		showLanguage: true,
+		showGit:      true,
+		roots:        []string{rootA, rootB},
+		rootLabels: map[string]string{
+			rootA: "a/src",
+			rootB: "b/src",
+		},
+	}, fzfPath, []candidate{{path: "/tmp/repo", display: "repo", matchText: "repo"}})
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}
-	if result != "" {
-		t.Fatalf("expected empty result on abort, got %q", result)
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on abort, got %+v", result)
 	}
 
 	args, err := os.ReadFile(argsPath)
@@ -395,6 +406,15 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	}
 	if !strings.Contains(string(args), "--nth=2,4\n") {
 		t.Fatalf("expected --nth=2,4 in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), "--bind=ctrl-r:execute-silent(") {
+		t.Fatalf("expected ctrl-r root switch binding in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), "Ctrl-R switch root") {
+		t.Fatalf("expected multi-root footer in fzf args, got %q", string(args))
+	}
+	if !strings.Contains(string(args), ")+reload(") {
+		t.Fatalf("expected ctrl-r to reload filtered candidates, got %q", string(args))
 	}
 }
 
@@ -415,8 +435,8 @@ func TestPickRepoIgnoresBrokenPipeOnAbortExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickRepo returned error: %v", err)
 	}
-	if result != "" {
-		t.Fatalf("expected empty result on abort, got %q", result)
+	if result != (pickerResult{}) {
+		t.Fatalf("expected empty result on abort, got %+v", result)
 	}
 }
 
@@ -547,23 +567,24 @@ func TestDescribeRepoOmitsRootFieldWhenSingleRoot(t *testing.T) {
 	}
 }
 
-func TestSplitResultTreatsEmptyExpectLineAsNoKey(t *testing.T) {
-	key, selection := splitResult("\n/tmp/fzf\tentry")
-	if key != "" {
-		t.Fatalf("unexpected key: %q", key)
-	}
-	if selection != "/tmp/fzf\tentry" {
-		t.Fatalf("unexpected selection: %q", selection)
+func TestParsePickerResultSelectionOnlyLegacy(t *testing.T) {
+	got := parsePickerResult("/tmp/fzf\tentry")
+	if got.query != "" || got.key != "" || got.selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected parsed result: %+v", got)
 	}
 }
 
-func TestSplitResultSeparatesExpectedKey(t *testing.T) {
-	key, selection := splitResult("ctrl-e\n/tmp/fzf\tentry")
-	if key != "ctrl-e" {
-		t.Fatalf("unexpected key: %q", key)
+func TestParsePickerResultWithQueryAndEmptyKey(t *testing.T) {
+	got := parsePickerResult("repo\n\n/tmp/fzf\tentry")
+	if got.query != "repo" || got.key != "" || got.selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected parsed result: %+v", got)
 	}
-	if selection != "/tmp/fzf\tentry" {
-		t.Fatalf("unexpected selection: %q", selection)
+}
+
+func TestParsePickerResultSeparatesExpectedKey(t *testing.T) {
+	got := parsePickerResult("new-workspace\nctrl-n\n/tmp/fzf\tentry")
+	if got.query != "new-workspace" || got.key != "ctrl-n" || got.selection != "/tmp/fzf\tentry" {
+		t.Fatalf("unexpected parsed result: %+v", got)
 	}
 }
 
@@ -776,6 +797,110 @@ func TestRenderGitFieldMarksNonGitEntries(t *testing.T) {
 	}
 }
 
+func TestRenderFooterRootBadgePadsAndColorsBlock(t *testing.T) {
+	field := renderFooterRootBadge(config{
+		fzfStyle: fzfStyleFull,
+		rootLabels: map[string]string{
+			"/tmp/archive": "archive",
+			"/tmp/src":     "src",
+		},
+	}, "/tmp/archive")
+	if !strings.Contains(field, cRootBadge) {
+		t.Fatalf("expected colored footer badge, got %q", field)
+	}
+	if !strings.Contains(field, " archive ") {
+		t.Fatalf("expected padded footer label, got %q", field)
+	}
+}
+
+func TestRenderFooterRootBadgePlainOmitsAnsi(t *testing.T) {
+	field := renderFooterRootBadge(config{
+		fzfStyle: fzfStylePlain,
+		rootLabels: map[string]string{
+			"/tmp/archive": "archive",
+			"/tmp/src":     "src",
+		},
+	}, "/tmp/archive")
+	if strings.Contains(field, "\033[") {
+		t.Fatalf("expected plain footer badge without ANSI, got %q", field)
+	}
+	if field != "  archive  " {
+		t.Fatalf("unexpected plain footer badge: %q", field)
+	}
+}
+
+func TestRenderFooterRootBadgeTruncatesLongLabels(t *testing.T) {
+	root := "/tmp/this-root-label-is-definitely-longer-than-thirty-columns"
+	field := renderFooterRootBadge(config{
+		fzfStyle: fzfStylePlain,
+		rootLabels: map[string]string{
+			root: "this-root-label-is-definitely-longer-than-thirty-columns",
+		},
+	}, root)
+	if !strings.Contains(field, "...") {
+		t.Fatalf("expected truncated footer badge, got %q", field)
+	}
+	if displayWidth(strings.TrimSpace(field)) != footerRootMaxWidth {
+		t.Fatalf("expected truncated badge width %d, got %d", footerRootMaxWidth, displayWidth(strings.TrimSpace(field)))
+	}
+}
+
+func TestComputeFooterRootWidthUsesLongestLabel(t *testing.T) {
+	width := computeFooterRootWidth(map[string]string{
+		"/tmp/src":     "src",
+		"/tmp/archive": "archive",
+	})
+	if width != displayWidth(activeRootAllLabel) {
+		t.Fatalf("unexpected footer root width: got %d want %d", width, displayWidth(activeRootAllLabel))
+	}
+}
+
+func TestComputeFooterRootWidthClampsAtThirty(t *testing.T) {
+	width := computeFooterRootWidth(map[string]string{
+		"/tmp/long": "this-root-label-is-definitely-longer-than-thirty-columns",
+	})
+	if width != footerRootMaxWidth {
+		t.Fatalf("unexpected clamped footer root width: got %d want %d", width, footerRootMaxWidth)
+	}
+}
+
+func TestCreateFooterTextIncludesBadgeAndActions(t *testing.T) {
+	text := createFooterText(config{
+		fzfStyle: fzfStylePlain,
+		roots:    []string{"/tmp/src", "/tmp/archive"},
+		rootLabels: map[string]string{
+			"/tmp/src":     "src",
+			"/tmp/archive": "archive",
+		},
+	}, "/tmp/archive")
+	if !strings.HasPrefix(text, "  archive  ") {
+		t.Fatalf("expected footer text to start with root badge, got %q", text)
+	}
+	if !strings.Contains(text, "Ctrl-R switch root") {
+		t.Fatalf("expected footer actions in %q", text)
+	}
+}
+
+func TestCreateFooterTextCentersShortRootLabels(t *testing.T) {
+	text := createFooterText(config{
+		fzfStyle: fzfStylePlain,
+		roots:    []string{"/tmp/src", "/tmp/archive"},
+		rootLabels: map[string]string{
+			"/tmp/archive": "archive",
+			"/tmp/src":     "src",
+		},
+	}, "/tmp/src")
+	if !strings.HasPrefix(text, "    src   ") {
+		t.Fatalf("expected centered short root badge, got %q", text)
+	}
+}
+
+func TestPickerRootLabelUsesAllLabel(t *testing.T) {
+	if got := pickerRootLabel(config{}, activeRootAll); got != activeRootAllLabel {
+		t.Fatalf("unexpected all root label: %q", got)
+	}
+}
+
 func TestDescribeRepoIncludesBranchTextInGitField(t *testing.T) {
 	repo := initTestRepo(t)
 	commitAt(t, repo, "1700000300", "base")
@@ -840,12 +965,41 @@ func TestDisplayWidthTreatsAccentedLatinAsSingleWidth(t *testing.T) {
 	}
 }
 
-func TestResolveSelectionCreatesUnderFirstRoot(t *testing.T) {
+func TestResolveSelectionCreatesUnderSingleRootWithoutSelection(t *testing.T) {
+	root := t.TempDir()
+	cfg := config{roots: []string{root}}
+
+	target, err := resolveSelection(cfg, pickerResult{query: "new-workspace"})
+	if err != nil {
+		t.Fatalf("resolveSelection returned error: %v", err)
+	}
+
+	want := filepath.Join(root, "new-workspace")
+	if target != want {
+		t.Fatalf("unexpected target: got %q want %q", target, want)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected target directory to exist: %v", err)
+	}
+}
+
+func TestResolveSelectionUsesCurrentCreateRootForCtrlNEvenWithSelection(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 	cfg := config{roots: []string{rootA, rootB}}
 
-	target, err := resolveSelection(cfg, "", "new-workspace")
+	selected := serializeCandidate(candidate{
+		path:      filepath.Join(rootB, "existing"),
+		display:   "existing",
+		matchText: "existing",
+	})
+
+	target, err := resolveSelection(cfg, pickerResult{
+		query:      "new-workspace",
+		key:        "ctrl-n",
+		selection:  selected,
+		createRoot: rootA,
+	})
 	if err != nil {
 		t.Fatalf("resolveSelection returned error: %v", err)
 	}
@@ -856,6 +1010,63 @@ func TestResolveSelectionCreatesUnderFirstRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(target); err != nil {
 		t.Fatalf("expected target directory to exist: %v", err)
+	}
+}
+
+func TestResolveSelectionErrorsWithoutActiveCreateRootForCtrlN(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	cfg := config{roots: []string{rootA, rootB}}
+
+	_, err := resolveSelection(cfg, pickerResult{query: "new-workspace", key: "ctrl-n"})
+	if err == nil {
+		t.Fatal("expected resolveSelection to fail without an active create root")
+	}
+	if !strings.Contains(err.Error(), "no active create root selected") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveSelectionUsesCurrentCreateRootForCtrlNWithoutSelection(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	cfg := config{roots: []string{rootA, rootB}}
+
+	target, err := resolveSelection(cfg, pickerResult{
+		query:      "new-workspace",
+		key:        "ctrl-n",
+		createRoot: rootB,
+	})
+	if err != nil {
+		t.Fatalf("resolveSelection returned error: %v", err)
+	}
+
+	want := filepath.Join(rootB, "new-workspace")
+	if target != want {
+		t.Fatalf("unexpected target: got %q want %q", target, want)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected target directory to exist: %v", err)
+	}
+}
+
+func TestResolveSelectionUsesFirstRootWhenActiveRootIsAll(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	cfg := config{roots: []string{rootA, rootB}}
+
+	target, err := resolveSelection(cfg, pickerResult{
+		query:      "new-workspace",
+		key:        "ctrl-n",
+		createRoot: activeRootAll,
+	})
+	if err != nil {
+		t.Fatalf("resolveSelection returned error: %v", err)
+	}
+
+	want := filepath.Join(rootA, "new-workspace")
+	if target != want {
+		t.Fatalf("unexpected target: got %q want %q", target, want)
 	}
 }
 
