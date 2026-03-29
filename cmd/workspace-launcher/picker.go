@@ -198,23 +198,16 @@ func effectiveFzfStyle(style string) string {
 
 func fzfSearchNth(cfg config) string {
 	// --nth applies to the fields exposed by --with-nth, not the hidden serialized
-	// prefix fields. Keep this aligned with the visible display-column order.
-	columns := make([]string, 0, 2)
-	column := 1
-	if cfg.showRoot {
-		column++
+	// prefix fields. Build the search indexes from the same visible-column
+	// definition used to render candidates so search and display stay aligned.
+	columns := visibleCandidateColumns(cfg)
+	indexes := make([]string, 0, len(columns))
+	for i, column := range columns {
+		if candidateColumnSearchable(column) {
+			indexes = append(indexes, strconv.Itoa(i+1))
+		}
 	}
-
-	columns = append(columns, strconv.Itoa(column))
-	column++
-	if cfg.showLanguage {
-		column++
-	}
-	if cfg.showGit {
-		columns = append(columns, strconv.Itoa(column))
-	}
-
-	return strings.Join(columns, ",")
+	return strings.Join(indexes, ",")
 }
 
 func pickRepoHeadless(cfg config, candidates []candidate) (pickerResult, error) {
@@ -277,14 +270,17 @@ func candidateSearchText(cand candidate) string {
 	if cand.searchText != "" {
 		return cand.searchText
 	}
-	return buildCandidateSearchText(cand.matchText, cand.branchText)
+	return buildCandidateSearchText(cand.rootText, cand.matchText, cand.branchText)
 }
 
-func buildCandidateSearchText(matchText, branchText string) string {
-	if branchText == "" {
-		return strings.ToLower(matchText)
+func buildCandidateSearchText(parts ...string) string {
+	filtered := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
 	}
-	return strings.ToLower(matchText + " " + branchText)
+	return strings.ToLower(strings.Join(filtered, " "))
 }
 
 func branchSearchText(branch string) string {

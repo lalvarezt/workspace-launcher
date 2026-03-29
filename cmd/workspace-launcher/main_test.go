@@ -331,15 +331,18 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	}
 }
 
-func TestPickRepoHeadlessOnlyMatchesNameField(t *testing.T) {
+func TestPickRepoHeadlessMatchesRootField(t *testing.T) {
 	cfg := config{headlessBench: true, initialQuery: "archive"}
 	candidates := []candidate{
-		{path: "/tmp/archive/api", display: "archive\tapi", matchText: "api"},
+		{path: "/tmp/archive/api", rootText: "archive", display: "archive\tapi", matchText: "api"},
 	}
 
-	_, err := pickRepoHeadless(cfg, candidates)
-	if err == nil {
-		t.Fatal("expected query against root column to miss")
+	got, err := pickRepoHeadless(cfg, candidates)
+	if err != nil {
+		t.Fatalf("pickRepoHeadless returned error: %v", err)
+	}
+	if got.selection != "/tmp/archive/api\tapi\t\t\tarchive\tapi" {
+		t.Fatalf("unexpected root selection: %q", got.selection)
 	}
 }
 
@@ -418,8 +421,8 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	if !strings.Contains(string(args), "--with-nth=5..\n") {
 		t.Fatalf("expected --with-nth=5.. in fzf args, got %q", string(args))
 	}
-	if !strings.Contains(string(args), "--nth=2,4\n") {
-		t.Fatalf("expected --nth=2,4 in fzf args, got %q", string(args))
+	if !strings.Contains(string(args), "--nth=1,2,3\n") {
+		t.Fatalf("expected --nth=1,2,3 in fzf args, got %q", string(args))
 	}
 	if !strings.Contains(string(args), "--bind=ctrl-r:execute-silent(") {
 		t.Fatalf("expected ctrl-r root switch binding in fzf args, got %q", string(args))
@@ -429,6 +432,101 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	}
 	if !strings.Contains(string(args), ")+reload(") {
 		t.Fatalf("expected ctrl-r to reload filtered candidates, got %q", string(args))
+	}
+}
+
+func TestVisibleCandidateColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config
+		want []candidateColumn
+	}{
+		{
+			name: "name and age only",
+			cfg:  config{},
+			want: []candidateColumn{candidateColumnName, candidateColumnAge},
+		},
+		{
+			name: "all visible columns",
+			cfg: config{
+				showRoot:     true,
+				showGit:      true,
+				showLanguage: true,
+			},
+			want: []candidateColumn{
+				candidateColumnRoot,
+				candidateColumnName,
+				candidateColumnGit,
+				candidateColumnLanguage,
+				candidateColumnAge,
+			},
+		},
+		{
+			name: "root without git",
+			cfg: config{
+				showRoot:     true,
+				showLanguage: true,
+			},
+			want: []candidateColumn{
+				candidateColumnRoot,
+				candidateColumnName,
+				candidateColumnLanguage,
+				candidateColumnAge,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := visibleCandidateColumns(tt.cfg)
+			if len(got) != len(tt.want) {
+				t.Fatalf("unexpected column count: got %v want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("unexpected columns: got %v want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestFzfSearchNthFollowsVisibleCandidateColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config
+		want string
+	}{
+		{
+			name: "name only searchable without metadata",
+			cfg:  config{},
+			want: "1",
+		},
+		{
+			name: "root name and git searchable when all visible",
+			cfg: config{
+				showRoot:     true,
+				showGit:      true,
+				showLanguage: true,
+			},
+			want: "1,2,3",
+		},
+		{
+			name: "root and name stay searchable when git hidden",
+			cfg: config{
+				showRoot:     true,
+				showLanguage: true,
+			},
+			want: "1,2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fzfSearchNth(tt.cfg); got != tt.want {
+				t.Fatalf("unexpected nth columns: got %q want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1008,14 +1106,14 @@ func TestRenderCandidatesUsesObservedNameWidthBeforeShrinkingMetadata(t *testing
 	if len(fields) != 5 {
 		t.Fatalf("unexpected field count: got %d want %d", len(fields), 5)
 	}
-	if !strings.Contains(fields[2], "Go") {
-		t.Fatalf("expected language label to remain visible, got %q", fields[2])
+	if !strings.Contains(fields[2], branch) {
+		t.Fatalf("expected full branch label in git field, got %q", fields[2])
 	}
-	if !strings.Contains(fields[3], branch) {
-		t.Fatalf("expected full branch label in git field, got %q", fields[3])
+	if strings.Contains(fields[2], "...") {
+		t.Fatalf("expected git field without ellipsis, got %q", fields[2])
 	}
-	if strings.Contains(fields[3], "...") {
-		t.Fatalf("expected git field without ellipsis, got %q", fields[3])
+	if !strings.Contains(fields[3], "Go") {
+		t.Fatalf("expected language label to remain visible, got %q", fields[3])
 	}
 }
 

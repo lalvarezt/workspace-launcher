@@ -95,6 +95,7 @@ type childDir struct {
 
 type candidate struct {
 	path       string
+	rootText   string
 	display    string
 	matchText  string
 	branchText string
