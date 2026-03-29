@@ -165,20 +165,21 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 			fields = append(fields, paintFieldStyled(styled, cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
 		}
 		fields = append(fields, nameField)
-		if cfg.showLanguage {
-			fields = append(fields, renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
-		}
 		if cfg.showGit {
 			fields = append(fields, renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
+		}
+		if cfg.showLanguage {
+			fields = append(fields, renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
 		}
 		fields = append(fields, ageField)
 
 		out[i] = candidate{
 			path:       detail.child.path,
+			rootText:   detail.child.rootLabel,
 			display:    joinDisplayFields(fields),
 			matchText:  detail.matchText,
 			branchText: branchText,
-			searchText: buildCandidateSearchText(detail.matchText, branchText),
+			searchText: buildCandidateSearchText(detail.child.rootLabel, detail.matchText, branchText),
 			epoch:      detail.epoch,
 		}
 	}

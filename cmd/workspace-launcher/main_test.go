@@ -331,15 +331,18 @@ func TestPickRepoHeadlessFiltersByQuery(t *testing.T) {
 	}
 }
 
-func TestPickRepoHeadlessOnlyMatchesNameField(t *testing.T) {
+func TestPickRepoHeadlessMatchesRootField(t *testing.T) {
 	cfg := config{headlessBench: true, initialQuery: "archive"}
 	candidates := []candidate{
-		{path: "/tmp/archive/api", display: "archive\tapi", matchText: "api"},
+		{path: "/tmp/archive/api", rootText: "archive", display: "archive\tapi", matchText: "api"},
 	}
 
-	_, err := pickRepoHeadless(cfg, candidates)
-	if err == nil {
-		t.Fatal("expected query against root column to miss")
+	got, err := pickRepoHeadless(cfg, candidates)
+	if err != nil {
+		t.Fatalf("pickRepoHeadless returned error: %v", err)
+	}
+	if got.selection != "/tmp/archive/api\tapi\t\t\tarchive\tapi" {
+		t.Fatalf("unexpected root selection: %q", got.selection)
 	}
 }
 
@@ -418,8 +421,8 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	if !strings.Contains(string(args), "--with-nth=5..\n") {
 		t.Fatalf("expected --with-nth=5.. in fzf args, got %q", string(args))
 	}
-	if !strings.Contains(string(args), "--nth=2,4\n") {
-		t.Fatalf("expected --nth=2,4 in fzf args, got %q", string(args))
+	if !strings.Contains(string(args), "--nth=1,2,3\n") {
+		t.Fatalf("expected --nth=1,2,3 in fzf args, got %q", string(args))
 	}
 	if !strings.Contains(string(args), "--bind=ctrl-r:execute-silent(") {
 		t.Fatalf("expected ctrl-r root switch binding in fzf args, got %q", string(args))
@@ -1008,14 +1011,14 @@ func TestRenderCandidatesUsesObservedNameWidthBeforeShrinkingMetadata(t *testing
 	if len(fields) != 5 {
 		t.Fatalf("unexpected field count: got %d want %d", len(fields), 5)
 	}
-	if !strings.Contains(fields[2], "Go") {
-		t.Fatalf("expected language label to remain visible, got %q", fields[2])
+	if !strings.Contains(fields[2], branch) {
+		t.Fatalf("expected full branch label in git field, got %q", fields[2])
 	}
-	if !strings.Contains(fields[3], branch) {
-		t.Fatalf("expected full branch label in git field, got %q", fields[3])
+	if strings.Contains(fields[2], "...") {
+		t.Fatalf("expected git field without ellipsis, got %q", fields[2])
 	}
-	if strings.Contains(fields[3], "...") {
-		t.Fatalf("expected git field without ellipsis, got %q", fields[3])
+	if !strings.Contains(fields[3], "Go") {
+		t.Fatalf("expected language label to remain visible, got %q", fields[3])
 	}
 }
 

@@ -156,7 +156,7 @@ func BenchmarkPickRepoHeadless_QueryMatchEarly(b *testing.B) {
 			cands := makeBenchCandidates(candCount)
 			cands[0].matchText = "needle-early"
 			cands[0].display = "needle-early"
-			cands[0].searchText = buildCandidateSearchText(cands[0].matchText, cands[0].branchText)
+			cands[0].searchText = buildCandidateSearchText(cands[0].rootText, cands[0].matchText, cands[0].branchText)
 			cfg := config{
 				headlessBench: true,
 				initialQuery:  "needle-early",
@@ -191,7 +191,7 @@ func BenchmarkPickRepoHeadless_QueryMatchLate(b *testing.B) {
 			cands := makeBenchCandidates(candCount)
 			last := len(cands) - 1
 			cands[last].branchText = "feature/needle-late"
-			cands[last].searchText = buildCandidateSearchText(cands[last].matchText, cands[last].branchText)
+			cands[last].searchText = buildCandidateSearchText(cands[last].rootText, cands[last].matchText, cands[last].branchText)
 			cfg := config{
 				headlessBench: true,
 				initialQuery:  "needle-late",
@@ -298,7 +298,7 @@ func makeBenchCandidates(count int) []candidate {
 			display:    name,
 			matchText:  name,
 			branchText: branch,
-			searchText: buildCandidateSearchText(name, branch),
+			searchText: buildCandidateSearchText("", name, branch),
 		}
 	}
 	return cands

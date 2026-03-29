@@ -199,20 +199,23 @@ func effectiveFzfStyle(style string) string {
 func fzfSearchNth(cfg config) string {
 	// --nth applies to the fields exposed by --with-nth, not the hidden serialized
 	// prefix fields. Keep this aligned with the visible display-column order.
-	columns := make([]string, 0, 2)
+	columns := make([]string, 0, 3)
 	column := 1
 	if cfg.showRoot {
+		columns = append(columns, strconv.Itoa(column))
 		column++
 	}
 
 	columns = append(columns, strconv.Itoa(column))
 	column++
+	if cfg.showGit {
+		columns = append(columns, strconv.Itoa(column))
+		column++
+	}
 	if cfg.showLanguage {
 		column++
 	}
-	if cfg.showGit {
-		columns = append(columns, strconv.Itoa(column))
-	}
+	column++
 
 	return strings.Join(columns, ",")
 }
@@ -277,14 +280,21 @@ func candidateSearchText(cand candidate) string {
 	if cand.searchText != "" {
 		return cand.searchText
 	}
-	return buildCandidateSearchText(cand.matchText, cand.branchText)
+	return buildCandidateSearchText(cand.rootText, cand.matchText, cand.branchText)
 }
 
-func buildCandidateSearchText(matchText, branchText string) string {
-	if branchText == "" {
-		return strings.ToLower(matchText)
+func buildCandidateSearchText(rootText, matchText, branchText string) string {
+	parts := make([]string, 0, 3)
+	if rootText != "" {
+		parts = append(parts, rootText)
 	}
-	return strings.ToLower(matchText + " " + branchText)
+	if matchText != "" {
+		parts = append(parts, matchText)
+	}
+	if branchText != "" {
+		parts = append(parts, branchText)
+	}
+	return strings.ToLower(strings.Join(parts, " "))
 }
 
 func branchSearchText(branch string) string {
