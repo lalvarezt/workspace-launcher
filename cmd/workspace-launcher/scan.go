@@ -146,6 +146,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 
 	out := make([]candidate, len(details))
 	styled := effectiveFzfStyle(cfg.fzfStyle) != fzfStylePlain
+	columns := visibleCandidateColumns(cfg)
 	for i, detail := range details {
 		branch := detail.git.branchLabel
 		if branch == "" {
@@ -160,18 +161,25 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
 		ageField := renderAgeFieldStyled(detail.ageText, cfg.ageColumnWidth, styled)
 
-		fields := make([]string, 0, 4)
-		if cfg.showRoot {
-			fields = append(fields, paintFieldStyled(styled, cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
+		fields := make([]string, 0, len(columns))
+		searchParts := make([]string, 0, len(columns))
+		for _, column := range columns {
+			switch column {
+			case candidateColumnRoot:
+				fields = append(fields, paintFieldStyled(styled, cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
+				searchParts = append(searchParts, detail.child.rootLabel)
+			case candidateColumnName:
+				fields = append(fields, nameField)
+				searchParts = append(searchParts, detail.matchText)
+			case candidateColumnGit:
+				fields = append(fields, renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
+				searchParts = append(searchParts, branchText)
+			case candidateColumnLanguage:
+				fields = append(fields, renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
+			case candidateColumnAge:
+				fields = append(fields, ageField)
+			}
 		}
-		fields = append(fields, nameField)
-		if cfg.showGit {
-			fields = append(fields, renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
-		}
-		if cfg.showLanguage {
-			fields = append(fields, renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
-		}
-		fields = append(fields, ageField)
 
 		out[i] = candidate{
 			path:       detail.child.path,
@@ -179,7 +187,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 			display:    joinDisplayFields(fields),
 			matchText:  detail.matchText,
 			branchText: branchText,
-			searchText: buildCandidateSearchText(detail.child.rootLabel, detail.matchText, branchText),
+			searchText: buildCandidateSearchText(searchParts...),
 			epoch:      detail.epoch,
 		}
 	}

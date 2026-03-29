@@ -435,6 +435,101 @@ func TestPickRepoPassesHistoryScheme(t *testing.T) {
 	}
 }
 
+func TestVisibleCandidateColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config
+		want []candidateColumn
+	}{
+		{
+			name: "name and age only",
+			cfg:  config{},
+			want: []candidateColumn{candidateColumnName, candidateColumnAge},
+		},
+		{
+			name: "all visible columns",
+			cfg: config{
+				showRoot:     true,
+				showGit:      true,
+				showLanguage: true,
+			},
+			want: []candidateColumn{
+				candidateColumnRoot,
+				candidateColumnName,
+				candidateColumnGit,
+				candidateColumnLanguage,
+				candidateColumnAge,
+			},
+		},
+		{
+			name: "root without git",
+			cfg: config{
+				showRoot:     true,
+				showLanguage: true,
+			},
+			want: []candidateColumn{
+				candidateColumnRoot,
+				candidateColumnName,
+				candidateColumnLanguage,
+				candidateColumnAge,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := visibleCandidateColumns(tt.cfg)
+			if len(got) != len(tt.want) {
+				t.Fatalf("unexpected column count: got %v want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("unexpected columns: got %v want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestFzfSearchNthFollowsVisibleCandidateColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config
+		want string
+	}{
+		{
+			name: "name only searchable without metadata",
+			cfg:  config{},
+			want: "1",
+		},
+		{
+			name: "root name and git searchable when all visible",
+			cfg: config{
+				showRoot:     true,
+				showGit:      true,
+				showLanguage: true,
+			},
+			want: "1,2,3",
+		},
+		{
+			name: "root and name stay searchable when git hidden",
+			cfg: config{
+				showRoot:     true,
+				showLanguage: true,
+			},
+			want: "1,2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fzfSearchNth(tt.cfg); got != tt.want {
+				t.Fatalf("unexpected nth columns: got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPickRepoIgnoresBrokenPipeOnAbortExit(t *testing.T) {
 	fzfPath := writeTestScript(t, "#!/bin/sh\nexec 0<&-\nexit 130\n")
 
