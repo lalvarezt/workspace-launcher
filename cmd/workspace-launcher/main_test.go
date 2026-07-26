@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,27 @@ import (
 	"testing"
 	"time"
 )
+
+func TestReadBufferedLineHandlesLongLines(t *testing.T) {
+	longLine := strings.Repeat("x", 64)
+	reader := bufio.NewReaderSize(strings.NewReader(longLine+"\nnext"), 16)
+
+	line, err := readBufferedLine(reader)
+	if err != nil {
+		t.Fatalf("readBufferedLine returned error: %v", err)
+	}
+	if string(line) != longLine {
+		t.Fatalf("unexpected long line: got %q want %q", line, longLine)
+	}
+
+	line, err = readBufferedLine(reader)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("unexpected final read error: got %v want EOF", err)
+	}
+	if string(line) != "next" {
+		t.Fatalf("unexpected final line: got %q want %q", line, "next")
+	}
+}
 
 func TestGitLastCommitEpochFastLooseObject(t *testing.T) {
 	repo := initTestRepo(t)

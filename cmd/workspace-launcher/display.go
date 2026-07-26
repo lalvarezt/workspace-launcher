@@ -365,35 +365,29 @@ func renderAgeFieldStyled(age string, width int, styled bool) string {
 }
 
 func renderLangFieldStyled(lang string, width int, styled bool) string {
-	icon := "•"
-	label := "Misc"
+	text := "•  Misc"
 	color := cMisc
 
 	switch lang {
 	case "Go":
-		icon, label, color = "", "Go", cGo
+		text, color = "  Go", cGo
 	case "Rust":
-		icon, label, color = "", "Rust", cRust
+		text, color = "  Rust", cRust
 	case "Python":
-		icon, label, color = "", "Python", cPython
+		text, color = "  Python", cPython
 	case "Node":
-		icon, label, color = "", "Node", cNode
+		text, color = "  Node", cNode
 	case "Lua":
-		icon, label, color = "", "Lua", cLua
+		text, color = "  Lua", cLua
 	case "Ruby":
-		icon, label, color = "", "Ruby", cRuby
+		text, color = "  Ruby", cRuby
 	case "Nix":
-		icon, label, color = "", "Nix", cNix
-	}
-
-	iconCell := icon + "  "
-	if icon == "•" {
-		iconCell = "•  "
+		text, color = "  Nix", cNix
 	}
 	if width <= 0 {
 		return ""
 	}
-	return paintFieldStyled(styled, color, fitField(iconCell+label, width))
+	return paintFieldStyled(styled, color, fitField(text, width))
 }
 
 func gitFieldText(meta gitMeta, branch string) string {
@@ -401,6 +395,14 @@ func gitFieldText(meta gitMeta, branch string) string {
 		return "-"
 	}
 
+	icon := gitFieldIcon(meta)
+	if branch == "" || branch == "-" {
+		return icon
+	}
+	return icon + "  " + branch
+}
+
+func gitFieldIcon(meta gitMeta) string {
 	icon := ""
 	switch {
 	case meta.isLocked:
@@ -410,12 +412,18 @@ func gitFieldText(meta gitMeta, branch string) string {
 	case meta.isSubmodule:
 		icon = ""
 	}
+	return icon
+}
 
-	text := icon
-	if branch != "" && branch != "-" {
-		text += "  " + branch
+func gitFieldDisplayWidth(meta gitMeta, branch string) int {
+	if !meta.present {
+		return 1
 	}
-	return text
+	fieldWidth := displayWidth(gitFieldIcon(meta))
+	if branch != "" && branch != "-" {
+		fieldWidth += 2 + displayWidth(branch)
+	}
+	return fieldWidth
 }
 
 func renderGitFieldStyled(meta gitMeta, branch string, width int, styled bool) string {

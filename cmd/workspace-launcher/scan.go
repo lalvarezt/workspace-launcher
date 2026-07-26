@@ -377,7 +377,7 @@ func computeRootLabelWidth(labels map[string]string) int {
 func computeGitColumnWidth(details []repoDetails) int {
 	longest := gitMinWidth
 	for _, detail := range details {
-		width := displayWidth(gitFieldText(detail.git, detail.git.branchLabel))
+		width := gitFieldDisplayWidth(detail.git, detail.git.branchLabel)
 		if width > longest {
 			longest = width
 		}

@@ -388,32 +388,65 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 
 	buf := acquireCommitObjectReader(reader)
 	defer releaseCommitObjectReader(buf)
-	if _, err := buf.ReadBytes(0); err != nil {
+	if _, err := buf.ReadSlice(0); err != nil {
 		return 0, errors.New("invalid object header")
 	}
 
 	for {
-		line, err := buf.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+		line, err := readBufferedLine(buf)
+		if err != nil && err != io.EOF {
 			return 0, err
 		}
-		if strings.HasPrefix(line, "committer ") {
-			epochText, parseErr := parseCommitterEpoch(line)
+		if bytes.HasPrefix(line, []byte("committer ")) {
+			epochText, parseErr := parseCommitterEpochBytes(line)
 			if parseErr != nil {
 				return 0, parseErr
 			}
-			epoch, parseErr := strconv.ParseInt(epochText, 10, 64)
+			epoch, parseErr := strconv.ParseInt(string(epochText), 10, 64)
 			if parseErr != nil {
 				return 0, parseErr
 			}
 			return epoch, nil
 		}
-		if errors.Is(err, io.EOF) {
+		if err == io.EOF {
 			break
 		}
 	}
 
 	return 0, errors.New("committer line not found")
+}
+
+func readBufferedLine(reader *bufio.Reader) ([]byte, error) {
+	line, err := reader.ReadSlice('\n')
+	if err != bufio.ErrBufferFull {
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+		}
+		return line, err
+	}
+
+	fullLine := append([]byte(nil), line...)
+	for err == bufio.ErrBufferFull {
+		line, err = reader.ReadSlice('\n')
+		fullLine = append(fullLine, line...)
+	}
+	if len(fullLine) > 0 && fullLine[len(fullLine)-1] == '\n' {
+		fullLine = fullLine[:len(fullLine)-1]
+	}
+	return fullLine, err
+}
+
+func parseCommitterEpochBytes(line []byte) ([]byte, error) {
+	line = bytes.TrimSpace(line)
+	lastSpace := bytes.LastIndexByte(line, ' ')
+	if lastSpace < 0 {
+		return nil, errors.New("invalid committer line")
+	}
+	prevSpace := bytes.LastIndexByte(line[:lastSpace], ' ')
+	if prevSpace < 0 || prevSpace+1 >= lastSpace {
+		return nil, errors.New("invalid committer line")
+	}
+	return line[prevSpace+1 : lastSpace], nil
 }
 
 func acquireZlibInputReader(r io.Reader) *bufio.Reader {
