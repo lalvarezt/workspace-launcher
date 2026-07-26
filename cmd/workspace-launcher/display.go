@@ -160,7 +160,12 @@ func shrinkAgeColumnWidth(width, twoBlockWidth, oneBlockWidth, deficit int) int 
 }
 
 func isCurrentRepo(cwd, dir string) bool {
-	return cwd == dir || strings.HasPrefix(cwd, dir+string(filepath.Separator))
+	if cwd == dir {
+		return true
+	}
+	return len(cwd) > len(dir) &&
+		strings.HasPrefix(cwd, dir) &&
+		cwd[len(dir)] == filepath.Separator
 }
 
 func fitField(text string, width int) string {
@@ -169,7 +174,17 @@ func fitField(text string, width int) string {
 	}
 	visibleWidth := displayWidth(text)
 	if visibleWidth <= width {
-		return text + strings.Repeat(" ", width-visibleWidth)
+		padding := width - visibleWidth
+		if padding == 0 {
+			return text
+		}
+		var b strings.Builder
+		b.Grow(len(text) + padding)
+		b.WriteString(text)
+		for range padding {
+			b.WriteByte(' ')
+		}
+		return b.String()
 	}
 	if width <= 3 {
 		return trimDisplayWidth(text, width)

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -17,6 +18,7 @@ func buildCandidates(cfg config) ([]candidate, error) {
 			return nil, err
 		}
 
+		children = slices.Grow(children, len(entries))
 		for _, entry := range entries {
 			path := filepath.Join(root, entry.Name())
 			info, err := os.Stat(path)
@@ -49,22 +51,23 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		return renderCandidates(cfg, details), nil
 	}
 
-	type jobResult struct {
-		index  int
-		detail repoDetails
-		err    error
-	}
-
 	jobs := make(chan int, len(children))
-	out := make(chan jobResult, len(children))
 	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
 	workerCount := min(cfg.jobs, len(children))
 
 	for range workerCount {
 		wg.Go(func() {
 			for idx := range jobs {
 				detail, err := inspectRepo(cfg, children[idx], needsInspect)
-				out <- jobResult{index: idx, detail: detail, err: err}
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = err
+					})
+					continue
+				}
+				details[idx] = detail
 			}
 		})
 	}
@@ -73,20 +76,7 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		jobs <- i
 	}
 	close(jobs)
-
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-
-	var firstErr error
-	for res := range out {
-		if res.err != nil && firstErr == nil {
-			firstErr = res.err
-			continue
-		}
-		details[res.index] = res.detail
-	}
+	wg.Wait()
 	if firstErr != nil {
 		return nil, firstErr
 	}
@@ -147,6 +137,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 	out := make([]candidate, len(details))
 	styled := effectiveFzfStyle(cfg.fzfStyle) != fzfStylePlain
 	columns := visibleCandidateColumns(cfg)
+	defaultMarkerField := paintFieldStyled(styled, cDim, " ")
 	for i, detail := range details {
 		branch := detail.git.branchLabel
 		if branch == "" {
@@ -154,15 +145,17 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		}
 		branchText := branchSearchText(detail.git.branchLabel)
 
-		markerField := paintFieldStyled(styled, cDim, " ")
+		markerField := defaultMarkerField
 		if isCurrentRepo(cfg.cwd, detail.child.path) {
 			markerField = paintFieldStyled(styled, cCurrent, "*")
 		}
 		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
 		ageField := renderAgeFieldStyled(detail.ageText, cfg.ageColumnWidth, styled)
 
-		fields := make([]string, 0, len(columns))
-		searchParts := make([]string, 0, len(columns))
+		var fieldBuffer [5]string
+		fields := fieldBuffer[:0]
+		var searchPartBuffer [3]string
+		searchParts := searchPartBuffer[:0]
 		for _, column := range columns {
 			switch column {
 			case candidateColumnRoot:
