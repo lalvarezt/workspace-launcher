@@ -31,6 +31,11 @@ var (
 			return bufio.NewReaderSize(nil, 1024)
 		},
 	}
+	packedRefsReaderPool = sync.Pool{
+		New: func() any {
+			return bufio.NewReaderSize(nil, 4096)
+		},
+	}
 	zlibReaderPool sync.Pool
 )
 
@@ -328,22 +333,29 @@ func lookupPackedRefFile(path, refName string) (string, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" || line[0] == '#' || line[0] == '^' {
+	reader := acquirePackedRefsReader(file)
+	defer releasePackedRefsReader(reader)
+	for {
+		line, readErr := readBufferedLine(reader)
+		if len(line) == 0 || line[0] == '#' || line[0] == '^' {
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				return "", readErr
+			}
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
+		separator := bytes.IndexByte(line, ' ')
+		if separator > 0 && string(line[separator+1:]) == refName {
+			return string(line[:separator]), nil
 		}
-		if fields[1] == refName {
-			return fields[0], nil
+		if readErr == io.EOF {
+			break
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return "", err
+		if readErr != nil {
+			return "", readErr
+		}
 	}
 	return "", errors.New("ref not found")
 }
@@ -496,6 +508,17 @@ func acquireCommitObjectReader(r io.Reader) *bufio.Reader {
 func releaseCommitObjectReader(reader *bufio.Reader) {
 	reader.Reset(nil)
 	commitObjectReaderPool.Put(reader)
+}
+
+func acquirePackedRefsReader(r io.Reader) *bufio.Reader {
+	reader := packedRefsReaderPool.Get().(*bufio.Reader)
+	reader.Reset(r)
+	return reader
+}
+
+func releasePackedRefsReader(reader *bufio.Reader) {
+	reader.Reset(nil)
+	packedRefsReaderPool.Put(reader)
 }
 
 func readTrimmedSmallFile(path string) (string, error) {

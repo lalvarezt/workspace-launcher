@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -116,7 +116,23 @@ func formatAge(now, epoch int64) string {
 	days := diff / 86400
 	hours := (diff % 86400) / 3600
 	mins := (diff % 3600) / 60
-	return fmt.Sprintf("%02dd %02dh %02dm", days, hours, mins)
+
+	var storage [32]byte
+	buf := storage[:0]
+	buf = appendPaddedTwoDigits(buf, days)
+	buf = append(buf, 'd', ' ')
+	buf = appendPaddedTwoDigits(buf, hours)
+	buf = append(buf, 'h', ' ')
+	buf = appendPaddedTwoDigits(buf, mins)
+	buf = append(buf, 'm')
+	return string(buf)
+}
+
+func appendPaddedTwoDigits(buf []byte, value int64) []byte {
+	if value < 10 {
+		buf = append(buf, '0')
+	}
+	return strconv.AppendInt(buf, value, 10)
 }
 
 func computeAgeColumnWidth(now int64, details []repoDetails) int {
