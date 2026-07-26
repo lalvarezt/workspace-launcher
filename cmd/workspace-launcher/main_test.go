@@ -874,6 +874,184 @@ func TestParseConfigSetsMultiRootColumnMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveRootsExpandsGlobInDeterministicOrder(t *testing.T) {
+	parent := t.TempDir()
+	rootB := filepath.Join(parent, "beta")
+	rootA := filepath.Join(parent, "alpha")
+	for _, root := range []string{rootB, rootA} {
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatalf("mkdir root: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(parent, "notes.txt"), []byte("not a root"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := resolveRoots([]string{filepath.Join(parent, "*")})
+	if err != nil {
+		t.Fatalf("resolveRoots returned error: %v", err)
+	}
+	assertRootPaths(t, got, []string{rootA, rootB})
+}
+
+func TestResolveRootsIgnoresUnmatchedGlobAlongsideLiteralRoot(t *testing.T) {
+	root := t.TempDir()
+
+	got, err := resolveRoots([]string{root, filepath.Join(root, "missing-*")})
+	if err != nil {
+		t.Fatalf("resolveRoots returned error: %v", err)
+	}
+	assertRootPaths(t, got, []string{root})
+}
+
+func TestResolveRootsRejectsOnlyUnmatchedGlobs(t *testing.T) {
+	parent := t.TempDir()
+
+	_, err := resolveRoots([]string{filepath.Join(parent, "missing-*")})
+	if err == nil || err.Error() != "at least one root is required" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveRootsRejectsMissingLiteralRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+
+	_, err := resolveRoots([]string{root})
+	if err == nil || !strings.Contains(err.Error(), "root does not exist") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveRootsRejectsMalformedGlob(t *testing.T) {
+	pattern := filepath.Join(t.TempDir(), "[")
+
+	_, err := resolveRoots([]string{pattern})
+	if err == nil || !strings.Contains(err.Error(), "invalid root pattern") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveRootsCanonicalizesAndDeduplicatesMatches(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	alias := filepath.Join(parent, "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	got, err := resolveRoots([]string{root, filepath.Join(parent, "*"), alias})
+	if err != nil {
+		t.Fatalf("resolveRoots returned error: %v", err)
+	}
+	assertRootPaths(t, got, []string{root})
+}
+
+func TestResolveRootsExpandsHomeBeforeGlob(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	rootA := filepath.Join(home, "projects", "alpha")
+	rootB := filepath.Join(home, "projects", "beta")
+	for _, root := range []string{rootB, rootA} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatalf("mkdir root: %v", err)
+		}
+	}
+
+	got, err := resolveRoots([]string{"~/projects/*"})
+	if err != nil {
+		t.Fatalf("resolveRoots returned error: %v", err)
+	}
+	assertRootPaths(t, got, []string{rootA, rootB})
+}
+
+func TestParseConfigExpandsPositionalRootGlob(t *testing.T) {
+	parent := t.TempDir()
+	rootA := filepath.Join(parent, "alpha")
+	rootB := filepath.Join(parent, "beta")
+	for _, root := range []string{rootA, rootB} {
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatalf("mkdir root: %v", err)
+		}
+	}
+
+	cfg, err := parseConfig([]string{filepath.Join(parent, "*")})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+	assertRootPaths(t, cfg.roots, []string{rootA, rootB})
+}
+
+func TestParseConfigExpandsRootEnvGlob(t *testing.T) {
+	mainRoot := filepath.Join(t.TempDir(), "git-repos")
+	worktreesRoot := t.TempDir()
+	rootA := filepath.Join(worktreesRoot, "alpha")
+	rootB := filepath.Join(worktreesRoot, "beta")
+	for _, root := range []string{mainRoot, rootB, rootA} {
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatalf("mkdir root: %v", err)
+		}
+	}
+	t.Setenv(
+		"WORKSPACE_LAUNCHER_ROOT",
+		mainRoot+string(os.PathListSeparator)+filepath.Join(worktreesRoot, "*"),
+	)
+
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+	assertRootPaths(t, cfg.roots, []string{mainRoot, rootA, rootB})
+	if defaultCreateRoot(cfg) != mainRoot {
+		t.Fatalf("unexpected default create root: got %q want %q", defaultCreateRoot(cfg), mainRoot)
+	}
+	if cfg.rootLabels[mainRoot] != "git-repos" ||
+		cfg.rootLabels[rootA] != "alpha" ||
+		cfg.rootLabels[rootB] != "beta" {
+		t.Fatalf("unexpected root labels: %v", cfg.rootLabels)
+	}
+}
+
+func TestParseConfigRefreshesRootGlobOnEveryCall(t *testing.T) {
+	parent := t.TempDir()
+	rootA := filepath.Join(parent, "alpha")
+	if err := os.Mkdir(rootA, 0o755); err != nil {
+		t.Fatalf("mkdir rootA: %v", err)
+	}
+	pattern := filepath.Join(parent, "*")
+
+	first, err := parseConfig([]string{pattern})
+	if err != nil {
+		t.Fatalf("first parseConfig returned error: %v", err)
+	}
+	assertRootPaths(t, first.roots, []string{rootA})
+
+	rootB := filepath.Join(parent, "beta")
+	if err := os.Mkdir(rootB, 0o755); err != nil {
+		t.Fatalf("mkdir rootB: %v", err)
+	}
+	second, err := parseConfig([]string{pattern})
+	if err != nil {
+		t.Fatalf("second parseConfig returned error: %v", err)
+	}
+	assertRootPaths(t, second.roots, []string{rootA, rootB})
+}
+
+func assertRootPaths(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("unexpected roots: got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected roots: got %v want %v", got, want)
+		}
+	}
+}
+
 func TestRenderGitFieldUsesGitIcon(t *testing.T) {
 	field := renderGitFieldStyled(gitMeta{present: true}, "main", 12, true)
 	if !strings.Contains(field, "  main") {

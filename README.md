@@ -90,6 +90,13 @@ Search across several roots:
 workspace-launcher ~/src ~/.config
 ```
 
+Root arguments also accept Go filepath glob patterns. Quote patterns so your
+shell passes them to `workspace-launcher` unchanged:
+
+```sh
+workspace-launcher "$HOME/projects/*"
+```
+
 When multiple roots are configured, the picker shows a left-side root context
 column to disambiguate duplicate workspace names. Filtering still matches the
 workspace-name column only.
@@ -171,7 +178,8 @@ Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--f
 - `--git` / `--no-git`: show or hide the git metadata column
 - `-h` / `--help`: show help text
 - `-v` / `--version`: show version
-- `ROOT...`: override the default root directories for this run
+- `ROOT...`: override the default root directories for this run; each value may
+  be a literal directory or a quoted filepath glob pattern
 
 ## Configuration
 
@@ -179,13 +187,33 @@ Configuration is done with environment variables:
 
 | Variable                             | Description                                                                |
 |--------------------------------------|----------------------------------------------------------------------------|
-| `WORKSPACE_LAUNCHER_ROOT`            | Default root directories. Use the OS path list separator (`:` on Unix, `;` on Windows). Defaults to `~/git-repos`. |
+| `WORKSPACE_LAUNCHER_ROOT`            | Default root directories or filepath glob patterns. Use the OS path list separator (`:` on Unix, `;` on Windows). Defaults to `~/git-repos`. |
 | `WORKSPACE_LAUNCHER_RECENCY`         | Recency mode: `mtime` (default) or `git`.                                  |
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
 | `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git metadata column by default.                                  |
 | `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
 | `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Highlights dirty git entries.                                              |
 | `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
+
+### Dynamic roots
+
+Glob roots are expanded every time the launcher starts, so new matching
+directories appear without a refresh command or cache. For example, Fish users
+can include both regular repositories and T3 worktree containers with a
+one-time universal variable:
+
+```fish
+set --universal --export WORKSPACE_LAUNCHER_ROOT "$HOME/git-repos:$HOME/.t3/worktrees/*"
+```
+
+If you previously used a `workspace-launcher-refresh-root` function to populate
+that variable, the literal pattern above replaces the refresh step.
+
+Patterns use Go filepath glob syntax: `*`, `?`, and character classes such as
+`[a-z]` are supported. Recursive shell-style `**` matching is not supported.
+Valid patterns that currently match no directories are ignored, while missing
+literal roots remain errors. Non-directory matches are ignored. If no usable
+roots remain, the launcher exits with an error.
 
 ## Install
 

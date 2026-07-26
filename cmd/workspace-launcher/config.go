@@ -165,13 +165,14 @@ Options:
   --no-git         Hide the git metadata column
   -v, --version    Show version
   -h, --help       Show this help text
+  ROOT...          Root directories or filepath glob patterns
 
 Shell integration:
   bash/zsh         source <(workspace-launcher --bash|--zsh [--bindings])
   fish             workspace-launcher --fish [--bindings] | source
 
 Environment:
-  WORKSPACE_LAUNCHER_ROOT           Default root directories, split with the OS path list separator (default: ~/git-repos)
+  WORKSPACE_LAUNCHER_ROOT           Default root directories or glob patterns, split with the OS path list separator (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
   WORKSPACE_LAUNCHER_GIT_DIRTY      Highlight dirty git entries when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
@@ -224,15 +225,38 @@ func resolveRoots(roots []string) ([]string, error) {
 	resolved := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
 	for _, root := range roots {
-		resolvedRoot, err := resolveRoot(root)
-		if err != nil {
-			return nil, err
+		root = expandHome(root)
+		matches := []string{root}
+		isPattern := strings.ContainsAny(root, "*?[")
+		if isPattern {
+			var err error
+			matches, err = filepath.Glob(root)
+			if err != nil {
+				return nil, fmt.Errorf("invalid root pattern %q: %w", root, err)
+			}
 		}
-		if _, ok := seen[resolvedRoot]; ok {
-			continue
+
+		for _, match := range matches {
+			if isPattern {
+				info, err := os.Stat(match)
+				if err != nil {
+					return nil, fmt.Errorf("inspect root match %q: %w", match, err)
+				}
+				if !info.IsDir() {
+					continue
+				}
+			}
+
+			resolvedRoot, err := resolveRoot(match)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := seen[resolvedRoot]; ok {
+				continue
+			}
+			seen[resolvedRoot] = struct{}{}
+			resolved = append(resolved, resolvedRoot)
 		}
-		seen[resolvedRoot] = struct{}{}
-		resolved = append(resolved, resolvedRoot)
 	}
 	if len(resolved) == 0 {
 		return nil, errors.New("at least one root is required")

@@ -12,7 +12,41 @@ var (
 	benchCandidatesSink []candidate
 	benchGitMetaSink    gitMeta
 	benchPickerSink     pickerResult
+	benchRootsSink      []string
 )
+
+func BenchmarkResolveRoots_Glob(b *testing.B) {
+	mainRoot := filepath.Join(b.TempDir(), "git-repos")
+	worktreesRoot := b.TempDir()
+	if err := os.Mkdir(mainRoot, 0o755); err != nil {
+		b.Fatalf("mkdir main root: %v", err)
+	}
+	for i := range 8 {
+		root := filepath.Join(worktreesRoot, fmt.Sprintf("project-%02d", i))
+		if err := os.Mkdir(root, 0o755); err != nil {
+			b.Fatalf("mkdir worktree root: %v", err)
+		}
+	}
+	roots := []string{mainRoot, filepath.Join(worktreesRoot, "*")}
+
+	resolved, err := resolveRoots(roots)
+	if err != nil {
+		b.Fatalf("resolveRoots returned error: %v", err)
+	}
+	if len(resolved) != 9 {
+		b.Fatalf("unexpected root count: got %d want 9", len(resolved))
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resolved, err := resolveRoots(roots)
+		if err != nil {
+			b.Fatalf("resolveRoots returned error: %v", err)
+		}
+		benchRootsSink = resolved
+	}
+}
 
 func BenchmarkBuildCandidates_Mtime(b *testing.B) {
 	for _, repoCount := range []int{100, 1000} {
