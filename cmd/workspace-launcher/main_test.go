@@ -322,6 +322,34 @@ func TestBuildCandidatesIncludesAllRoots(t *testing.T) {
 	}
 }
 
+func TestBuildCandidatesParallelScanSkipsNonDirectories(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	makeDir(t, repo, 1700001000, "")
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("not a workspace"), 0o644); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	cfg := config{
+		roots:     []string{root},
+		jobs:      4,
+		recency:   recencyMtime,
+		now:       1700003000,
+		nameWidth: 32,
+	}
+
+	cands, err := buildCandidates(cfg)
+	if err != nil {
+		t.Fatalf("buildCandidates returned error: %v", err)
+	}
+	if len(cands) != 1 {
+		t.Fatalf("unexpected candidate count: got %d want 1", len(cands))
+	}
+	if cands[0].path != repo {
+		t.Fatalf("unexpected candidate path: got %q want %q", cands[0].path, repo)
+	}
+}
+
 func TestPickRepoHeadlessSelectsFirstCandidate(t *testing.T) {
 	cfg := config{headlessBench: true}
 	candidates := []candidate{

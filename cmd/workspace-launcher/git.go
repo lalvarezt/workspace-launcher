@@ -261,7 +261,11 @@ func resolveHeadHashFromHead(layout gitLayout, head string) (string, error) {
 
 	refName := strings.TrimSpace(strings.TrimPrefix(head, "ref: "))
 	refPathSuffix := filepath.FromSlash(refName)
-	for _, baseDir := range []string{layout.gitDir, layout.commonDir} {
+	baseDirs := [...]string{layout.commonDir, layout.gitDir}
+	for i, baseDir := range baseDirs {
+		if i > 0 && baseDir == baseDirs[0] {
+			continue
+		}
 		refPath := filepath.Join(baseDir, refPathSuffix)
 		hash, err := readTrimmedSmallFile(refPath)
 		if err == nil {
@@ -314,7 +318,11 @@ func formatRefLabel(refName string) string {
 }
 
 func lookupPackedRef(layout gitLayout, refName string) (string, error) {
-	for _, baseDir := range []string{layout.gitDir, layout.commonDir} {
+	baseDirs := [...]string{layout.commonDir, layout.gitDir}
+	for i, baseDir := range baseDirs {
+		if i > 0 && baseDir == baseDirs[0] {
+			continue
+		}
 		hash, err := lookupPackedRefFile(filepath.Join(baseDir, "packed-refs"), refName)
 		if err == nil {
 			return hash, nil
@@ -365,20 +373,18 @@ func readCommitEpoch(layout gitLayout, hash string) (int64, error) {
 		return 0, errors.New("invalid commit hash")
 	}
 
-	objectDirs := []string{
-		filepath.Join(layout.gitDir, "objects"),
-		filepath.Join(layout.commonDir, "objects"),
+	epoch, err := readCommitEpochFromObjects(filepath.Join(layout.commonDir, "objects"), hash)
+	if err == nil {
+		return epoch, nil
 	}
-	for _, objectDir := range objectDirs {
-		epoch, err := readCommitEpochFromObjects(objectDir, hash)
-		if err == nil {
-			return epoch, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return 0, err
-		}
+	if !errors.Is(err, os.ErrNotExist) {
+		return 0, err
 	}
-	return 0, os.ErrNotExist
+	if layout.gitDir == layout.commonDir {
+		return 0, os.ErrNotExist
+	}
+
+	return readCommitEpochFromObjects(filepath.Join(layout.gitDir, "objects"), hash)
 }
 
 func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {

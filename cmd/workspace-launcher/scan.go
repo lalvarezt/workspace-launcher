@@ -21,16 +21,11 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		children = slices.Grow(children, len(entries))
 		for _, entry := range entries {
 			path := filepath.Join(root, entry.Name())
-			info, err := os.Stat(path)
-			if err != nil || !info.IsDir() {
-				continue
-			}
 			children = append(children, childDir{
 				name:      entry.Name(),
 				path:      path,
 				root:      root,
 				rootLabel: cfg.rootLabels[root],
-				modEpoch:  info.ModTime().Unix(),
 			})
 		}
 	}
@@ -40,13 +35,17 @@ func buildCandidates(cfg config) ([]candidate, error) {
 
 	details := make([]repoDetails, len(children))
 	needsInspect := cfg.showLanguage || cfg.showGit || cfg.recency == recencyGit
-	if !needsInspect || cfg.jobs <= 1 || len(children) == 1 {
+	if cfg.jobs <= 1 || len(children) == 1 {
 		for i, child := range children {
-			detail, err := inspectRepo(cfg, child, needsInspect)
+			detail, err := inspectRepoEntry(cfg, child, needsInspect)
 			if err != nil {
 				return nil, err
 			}
 			details[i] = detail
+		}
+		details = compactRepoDetails(details)
+		if len(details) == 0 {
+			return nil, nil
 		}
 		return renderCandidates(cfg, details), nil
 	}
@@ -60,7 +59,7 @@ func buildCandidates(cfg config) ([]candidate, error) {
 	for range workerCount {
 		wg.Go(func() {
 			for idx := range jobs {
-				detail, err := inspectRepo(cfg, children[idx], needsInspect)
+				detail, err := inspectRepoEntry(cfg, children[idx], needsInspect)
 				if err != nil {
 					errOnce.Do(func() {
 						firstErr = err
@@ -80,7 +79,30 @@ func buildCandidates(cfg config) ([]candidate, error) {
 	if firstErr != nil {
 		return nil, firstErr
 	}
+	details = compactRepoDetails(details)
+	if len(details) == 0 {
+		return nil, nil
+	}
 	return renderCandidates(cfg, details), nil
+}
+
+func inspectRepoEntry(cfg config, child childDir, inspect bool) (repoDetails, error) {
+	info, err := os.Stat(child.path)
+	if err != nil || !info.IsDir() {
+		return repoDetails{}, nil
+	}
+	child.modEpoch = info.ModTime().Unix()
+	return inspectRepo(cfg, child, inspect)
+}
+
+func compactRepoDetails(details []repoDetails) []repoDetails {
+	out := details[:0]
+	for _, detail := range details {
+		if detail.child.path != "" {
+			out = append(out, detail)
+		}
+	}
+	return out
 }
 
 func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) {
