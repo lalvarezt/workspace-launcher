@@ -21,9 +21,14 @@ type resettableZlibReader interface {
 }
 
 var (
+	zlibInputReaderPool = sync.Pool{
+		New: func() any {
+			return bufio.NewReaderSize(nil, 1024)
+		},
+	}
 	commitObjectReaderPool = sync.Pool{
 		New: func() any {
-			return bufio.NewReaderSize(strings.NewReader(""), 1024)
+			return bufio.NewReaderSize(nil, 1024)
 		},
 	}
 	zlibReaderPool sync.Pool
@@ -372,7 +377,10 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 	}
 	defer file.Close()
 
-	reader, err := acquireZlibReader(file)
+	input := acquireZlibInputReader(file)
+	defer releaseZlibInputReader(input)
+
+	reader, err := acquireZlibReader(input)
 	if err != nil {
 		return 0, err
 	}
@@ -406,6 +414,17 @@ func readCommitEpochFromObjects(objectDir, hash string) (int64, error) {
 	}
 
 	return 0, errors.New("committer line not found")
+}
+
+func acquireZlibInputReader(r io.Reader) *bufio.Reader {
+	reader := zlibInputReaderPool.Get().(*bufio.Reader)
+	reader.Reset(r)
+	return reader
+}
+
+func releaseZlibInputReader(reader *bufio.Reader) {
+	reader.Reset(nil)
+	zlibInputReaderPool.Put(reader)
 }
 
 func acquireZlibReader(r io.Reader) (resettableZlibReader, error) {
@@ -442,7 +461,7 @@ func acquireCommitObjectReader(r io.Reader) *bufio.Reader {
 }
 
 func releaseCommitObjectReader(reader *bufio.Reader) {
-	reader.Reset(strings.NewReader(""))
+	reader.Reset(nil)
 	commitObjectReaderPool.Put(reader)
 }
 
