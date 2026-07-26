@@ -160,6 +160,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 	styled := effectiveFzfStyle(cfg.fzfStyle) != fzfStylePlain
 	columns := visibleCandidateColumns(cfg)
 	defaultMarkerField := paintFieldStyled(styled, cDim, " ")
+	displayCapacity := candidateDisplayCapacity(cfg, len(columns), styled)
 	for i, detail := range details {
 		branch := detail.git.branchLabel
 		if branch == "" {
@@ -171,35 +172,43 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		if isCurrentRepo(cfg.cwd, detail.child.path) {
 			markerField = paintFieldStyled(styled, cCurrent, "*")
 		}
-		nameField := markerField + " " + paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth))
-		ageField := renderAgeFieldStyled(detail.ageText, cfg.ageColumnWidth, styled)
 
-		var fieldBuffer [5]string
-		fields := fieldBuffer[:0]
+		var display strings.Builder
+		display.Grow(displayCapacity)
 		var searchPartBuffer [3]string
 		searchParts := searchPartBuffer[:0]
-		for _, column := range columns {
+		for columnIndex, column := range columns {
+			if columnIndex > 0 {
+				display.WriteByte('\t')
+			}
 			switch column {
 			case candidateColumnRoot:
-				fields = append(fields, paintFieldStyled(styled, cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
+				display.WriteString(paintFieldStyled(styled, cDim, fitField(detail.child.rootLabel, cfg.rootLabelWidth)))
 				searchParts = append(searchParts, detail.child.rootLabel)
 			case candidateColumnName:
-				fields = append(fields, nameField)
+				display.WriteString(markerField)
+				display.WriteByte(' ')
+				display.WriteString(paintFieldStyled(styled, cName, fitField(detail.child.name, cfg.nameWidth)))
 				searchParts = append(searchParts, detail.matchText)
 			case candidateColumnGit:
-				fields = append(fields, renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
+				display.WriteString(renderGitFieldStyled(detail.git, branch, cfg.gitColumnWidth, styled))
 				searchParts = append(searchParts, branchText)
 			case candidateColumnLanguage:
-				fields = append(fields, renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
+				display.WriteString(renderLangFieldStyled(detail.lang, cfg.langColumnWidth, styled))
 			case candidateColumnAge:
-				fields = append(fields, ageField)
+				display.WriteString(renderAgeFieldStyled(detail.ageText, cfg.ageColumnWidth, styled))
+			}
+			if columnIndex < len(columns)-1 && gapWidth > 1 {
+				for range gapWidth - 1 {
+					display.WriteByte(' ')
+				}
 			}
 		}
 
 		out[i] = candidate{
 			path:       detail.child.path,
 			rootText:   detail.child.rootLabel,
-			display:    joinDisplayFields(fields),
+			display:    display.String(),
 			matchText:  detail.matchText,
 			branchText: branchText,
 			searchText: buildCandidateSearchText(searchParts...),
@@ -207,6 +216,26 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		}
 	}
 	return out
+}
+
+func candidateDisplayCapacity(cfg config, columnCount int, styled bool) int {
+	capacity := cfg.nameWidth + 2 + cfg.ageColumnWidth + 16
+	if cfg.showRoot {
+		capacity += cfg.rootLabelWidth
+	}
+	if cfg.showGit {
+		capacity += cfg.gitColumnWidth
+	}
+	if cfg.showLanguage {
+		capacity += cfg.langColumnWidth
+	}
+	if columnCount > 1 {
+		capacity += (columnCount - 1) * gapWidth
+	}
+	if styled {
+		capacity += 96
+	}
+	return capacity
 }
 
 func describeRepo(cfg config, child childDir, inspect bool) (candidate, error) {

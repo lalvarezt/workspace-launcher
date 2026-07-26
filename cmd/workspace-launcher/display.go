@@ -237,36 +237,6 @@ func centerField(text string, width int) string {
 	return strings.Repeat(" ", leftPad) + trimmed + strings.Repeat(" ", rightPad)
 }
 
-func joinDisplayFields(fields []string) string {
-	if len(fields) == 0 {
-		return ""
-	}
-
-	totalLen := 0
-	for _, field := range fields {
-		totalLen += len(field)
-	}
-	if len(fields) > 1 {
-		totalLen += (len(fields) - 1) * gapWidth
-	}
-
-	var b strings.Builder
-	b.Grow(totalLen)
-	for i, field := range fields {
-		if i > 0 {
-			b.WriteByte('\t')
-		}
-		b.WriteString(field)
-		if i < len(fields)-1 && gapWidth > 1 {
-			for range gapWidth - 1 {
-				b.WriteByte(' ')
-			}
-		}
-	}
-
-	return b.String()
-}
-
 func displayWidth(text string) int {
 	width := 0
 	for _, r := range text {

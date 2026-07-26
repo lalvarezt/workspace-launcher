@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +37,7 @@ var (
 			return bufio.NewReaderSize(nil, 4096)
 		},
 	}
-	zlibReaderPool sync.Pool
+	zlibReaderPool = make(chan resettableZlibReader, max(runtime.NumCPU(), 1))
 )
 
 func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool) gitMeta {
@@ -479,12 +480,13 @@ func releaseZlibInputReader(reader *bufio.Reader) {
 }
 
 func acquireZlibReader(r io.Reader) (resettableZlibReader, error) {
-	if pooled := zlibReaderPool.Get(); pooled != nil {
-		reader := pooled.(resettableZlibReader)
+	select {
+	case reader := <-zlibReaderPool:
 		if err := reader.Reset(r, nil); err == nil {
 			return reader, nil
 		}
 		_ = reader.Close()
+	default:
 	}
 
 	reader, err := zlib.NewReader(r)
@@ -502,7 +504,10 @@ func acquireZlibReader(r io.Reader) (resettableZlibReader, error) {
 
 func releaseZlibReader(reader resettableZlibReader) {
 	_ = reader.Close()
-	zlibReaderPool.Put(reader)
+	select {
+	case zlibReaderPool <- reader:
+	default:
+	}
 }
 
 func acquireCommitObjectReader(r io.Reader) *bufio.Reader {
