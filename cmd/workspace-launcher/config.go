@@ -13,11 +13,14 @@ import (
 	"golang.org/x/term"
 )
 
+const defaultScanJobs = 8
+
 func parseConfig(args []string) (config, error) {
 	maxJobs := max(runtime.NumCPU(), 1)
+	defaultJobs := min(maxJobs, defaultScanJobs)
 
 	roots := parseRootList(getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos"))
-	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", maxJobs), maxJobs)
+	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", defaultJobs), maxJobs)
 	cfg := config{
 		mode:          modePath,
 		fzfStyle:      fzfStyleFull,
@@ -173,7 +176,7 @@ Shell integration:
 
 Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directories or glob patterns, split with the OS path list separator (default: ~/git-repos)
-  WORKSPACE_LAUNCHER_JOBS           Parallel jobs, clamped to 1..CPU count
+  WORKSPACE_LAUNCHER_JOBS           Parallel jobs (default: up to 8), clamped to 1..CPU count
   WORKSPACE_LAUNCHER_GIT_DIRTY      Highlight dirty git entries when set to 1 (default: 0)
   WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)

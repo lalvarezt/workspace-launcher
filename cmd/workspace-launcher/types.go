@@ -90,6 +90,7 @@ type childDir struct {
 	path      string
 	root      string
 	rootLabel string
+	isDir     bool
 	modEpoch  int64
 }
 
@@ -122,6 +123,7 @@ type repoDetails struct {
 type dirFacts struct {
 	hasGit          bool
 	gitIsDir        bool
+	gitDir          string
 	hasGoMod        bool
 	hasCargoToml    bool
 	hasPackageJSON  bool

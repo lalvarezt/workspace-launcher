@@ -21,6 +21,65 @@ type resettableZlibReader interface {
 	Reset(io.Reader, []byte) error
 }
 
+// gitEpochCache shares immutable commit timestamps across repositories that
+// point at the same commit object, such as linked worktrees.
+type gitEpochCache struct {
+	mu       sync.RWMutex
+	epochs   map[string]int64
+	inflight map[string]*gitEpochLoad
+}
+
+type gitEpochLoad struct {
+	done  chan struct{}
+	epoch int64
+	err   error
+}
+
+func (c *gitEpochCache) load(hash string, read func() (int64, error)) (int64, error) {
+	if c == nil {
+		return read()
+	}
+	c.mu.RLock()
+	epoch, ok := c.epochs[hash]
+	c.mu.RUnlock()
+	if ok {
+		return epoch, nil
+	}
+
+	c.mu.Lock()
+	if epoch, ok := c.epochs[hash]; ok {
+		c.mu.Unlock()
+		return epoch, nil
+	}
+	if call, ok := c.inflight[hash]; ok {
+		c.mu.Unlock()
+		<-call.done
+		return call.epoch, call.err
+	}
+	if c.inflight == nil {
+		c.inflight = make(map[string]*gitEpochLoad)
+	}
+	call := &gitEpochLoad{done: make(chan struct{})}
+	c.inflight[hash] = call
+	c.mu.Unlock()
+
+	epoch, err := read()
+
+	c.mu.Lock()
+	delete(c.inflight, hash)
+	if err == nil && epoch > 0 {
+		if c.epochs == nil {
+			c.epochs = make(map[string]int64)
+		}
+		c.epochs[hash] = epoch
+	}
+	call.epoch = epoch
+	call.err = err
+	close(call.done)
+	c.mu.Unlock()
+	return epoch, err
+}
+
 var (
 	zlibInputReaderPool = sync.Pool{
 		New: func() any {
@@ -41,6 +100,14 @@ var (
 )
 
 func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool) gitMeta {
+	return inspectGitMetaWithCache(dir, gitIsDir, wantBranch, wantEpoch, wantDirty, nil)
+}
+
+func inspectGitMetaWithCache(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool, cache *gitEpochCache) gitMeta {
+	return inspectGitMetaWithKnownDir(dir, gitIsDir, "", wantBranch, wantEpoch, wantDirty, cache)
+}
+
+func inspectGitMetaWithKnownDir(dir string, gitIsDir bool, knownGitDir string, wantBranch, wantEpoch, wantDirty bool, cache *gitEpochCache) gitMeta {
 	meta := gitMeta{
 		present:     true,
 		branchLabel: "-",
@@ -48,7 +115,13 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 
 	if !wantBranch && !wantEpoch {
 		meta.isWorktree = !gitIsDir
-		if !gitIsDir {
+		if knownGitDir != "" {
+			meta.isWorktree = true
+			meta.isSubmodule, meta.isLocked = classifyLinkedGitDir(knownGitDir, true)
+			if meta.isSubmodule {
+				meta.isWorktree = false
+			}
+		} else if !gitIsDir {
 			gitDir, isWorktree, err := inspectDotGit(dir)
 			if err == nil {
 				meta.isWorktree = isWorktree
@@ -68,7 +141,10 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 
 	gitDir := filepath.Join(dir, ".git")
 	isWorktree := false
-	if !gitIsDir {
+	if knownGitDir != "" {
+		gitDir = knownGitDir
+		isWorktree = true
+	} else if !gitIsDir {
 		var err error
 		gitDir, isWorktree, err = inspectDotGit(dir)
 		if err != nil {
@@ -105,7 +181,14 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 				}
 				if hash, resolveErr := resolveHeadHashFromHead(layout, head); resolveErr == nil {
 					meta.headHash = hash
-					if epoch, readErr := readCommitEpoch(layout, hash); readErr == nil && epoch > 0 {
+					var epoch int64
+					var readErr error
+					if meta.isWorktree {
+						epoch, readErr = readCommitEpochWithCache(layout, hash, cache)
+					} else {
+						epoch, readErr = readCommitEpoch(layout, hash)
+					}
+					if readErr == nil && epoch > 0 {
 						meta.epoch = epoch
 					}
 				}
@@ -132,20 +215,35 @@ func inspectGitMeta(dir string, gitIsDir, wantBranch, wantEpoch, wantDirty bool)
 	return meta
 }
 
+func readCommitEpochWithCache(layout gitLayout, hash string, cache *gitEpochCache) (int64, error) {
+	return cache.load(hash, func() (int64, error) {
+		return readCommitEpoch(layout, hash)
+	})
+}
+
 func classifyLinkedGitDir(gitDir string, isWorktree bool) (bool, bool) {
 	if !isWorktree {
 		return false, false
 	}
 
-	cleanParts := strings.Split(filepath.Clean(gitDir), string(filepath.Separator))
-	gitIndex := -1
-	for i := len(cleanParts) - 1; i >= 0; i-- {
-		if cleanParts[i] == ".git" {
-			gitIndex = i
+	cleanGitDir := filepath.Clean(gitDir)
+	separator := string(filepath.Separator)
+	gitComponent := separator + ".git"
+	for searchEnd := len(cleanGitDir); searchEnd > 0; {
+		markerIndex := strings.LastIndex(cleanGitDir[:searchEnd], gitComponent)
+		if markerIndex < 0 {
 			break
 		}
+		componentEnd := markerIndex + len(gitComponent)
+		if componentEnd == len(cleanGitDir) || strings.HasPrefix(cleanGitDir[componentEnd:], separator) {
+			if componentEnd < len(cleanGitDir) && strings.HasPrefix(cleanGitDir[componentEnd+len(separator):], "modules"+separator) {
+				return true, false
+			}
+			return false, false
+		}
+		searchEnd = markerIndex + len(gitComponent) - 1
 	}
-	if gitIndex >= 0 && gitIndex+1 < len(cleanParts) && cleanParts[gitIndex+1] == "modules" {
+	if strings.HasPrefix(cleanGitDir, ".git"+separator) && strings.HasPrefix(strings.TrimPrefix(cleanGitDir, ".git"+separator), "modules"+separator) {
 		return true, false
 	}
 	if _, err := os.Stat(filepath.Join(gitDir, "locked")); err == nil {
@@ -209,6 +307,10 @@ func inspectDotGit(dir string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	return parseGitDirFile(dir, content)
+}
+
+func parseGitDirFile(dir string, content []byte) (string, bool, error) {
 	line := strings.TrimSpace(string(content))
 	const prefix = "gitdir: "
 	if !strings.HasPrefix(line, prefix) {

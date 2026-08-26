@@ -98,6 +98,32 @@ func BenchmarkBuildCandidates_GitRecency(b *testing.B) {
 	}
 }
 
+func BenchmarkBuildCandidates_GitRecencySharedWorktrees(b *testing.B) {
+	root := b.TempDir()
+	repo := initTestRepo(b)
+	commitAt(b, repo, "1700000300", "shared-worktree")
+	for i := range 32 {
+		worktree := filepath.Join(root, fmt.Sprintf("worktree-%02d", i))
+		runGit(b, repo, "worktree", "add", "--detach", "-q", worktree)
+	}
+
+	for _, jobs := range benchmarkJobCounts() {
+		jobs := jobs
+		b.Run(fmt.Sprintf("jobs_%d", jobs), func(b *testing.B) {
+			cfg := benchmarkConfig(root, jobs, recencyGit)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cands, err := buildCandidates(cfg)
+				if err != nil {
+					b.Fatalf("buildCandidates returned error: %v", err)
+				}
+				benchCandidatesSink = cands
+			}
+		})
+	}
+}
+
 func BenchmarkInspectGitMeta_RegularRepo(b *testing.B) {
 	repo := initTestRepo(b)
 	commitAt(b, repo, "1700000000", "regular")
@@ -152,6 +178,26 @@ func BenchmarkInspectGitMeta_Worktree(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		benchGitMetaSink = inspectGitMeta(worktree, false, true, true, false)
+	}
+}
+
+func BenchmarkInspectGitMeta_WorktreeCached(b *testing.B) {
+	repo := initTestRepo(b)
+	commitAt(b, repo, "1700000250", "cached-worktree")
+
+	worktree := filepath.Join(b.TempDir(), "wt")
+	runGit(b, repo, "worktree", "add", worktree)
+
+	cache := &gitEpochCache{}
+	meta := inspectGitMetaWithCache(worktree, false, true, true, false, cache)
+	if !meta.present || !meta.isWorktree || meta.epoch == 0 {
+		b.Fatalf("unexpected git metadata: %+v", meta)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchGitMetaSink = inspectGitMetaWithCache(worktree, false, true, true, false, cache)
 	}
 }
 
@@ -258,10 +304,15 @@ func benchmarkJobCounts() []int {
 	if maxJobs < 1 {
 		maxJobs = 1
 	}
-	if maxJobs == 1 {
-		return []int{1}
+	defaultJobs := min(maxJobs, defaultScanJobs)
+	counts := []int{1}
+	if defaultJobs > 1 {
+		counts = append(counts, defaultJobs)
 	}
-	return []int{1, maxJobs}
+	if maxJobs != defaultJobs {
+		counts = append(counts, maxJobs)
+	}
+	return counts
 }
 
 func benchmarkConfig(root string, jobs int, recency string) config {

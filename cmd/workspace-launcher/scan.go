@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 func buildCandidates(cfg config) ([]candidate, error) {
@@ -26,6 +27,7 @@ func buildCandidates(cfg config) ([]candidate, error) {
 				path:      path,
 				root:      root,
 				rootLabel: cfg.rootLabels[root],
+				isDir:     entry.IsDir(),
 			})
 		}
 	}
@@ -35,9 +37,13 @@ func buildCandidates(cfg config) ([]candidate, error) {
 
 	details := make([]repoDetails, len(children))
 	needsInspect := cfg.showLanguage || cfg.showGit || cfg.recency == recencyGit
+	var epochCache *gitEpochCache
+	if cfg.recency == recencyGit {
+		epochCache = &gitEpochCache{}
+	}
 	if cfg.jobs <= 1 || len(children) == 1 {
 		for i, child := range children {
-			detail, err := inspectRepoEntry(cfg, child, needsInspect)
+			detail, err := inspectRepoEntryWithCache(cfg, child, needsInspect, epochCache)
 			if err != nil {
 				return nil, err
 			}
@@ -50,16 +56,20 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		return renderCandidates(cfg, details), nil
 	}
 
-	jobs := make(chan int, len(children))
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
+	var next atomic.Uint64
 	workerCount := min(cfg.jobs, len(children))
 
 	for range workerCount {
 		wg.Go(func() {
-			for idx := range jobs {
-				detail, err := inspectRepoEntry(cfg, children[idx], needsInspect)
+			for {
+				idx := int(next.Add(1) - 1)
+				if idx >= len(children) {
+					return
+				}
+				detail, err := inspectRepoEntryWithCache(cfg, children[idx], needsInspect, epochCache)
 				if err != nil {
 					errOnce.Do(func() {
 						firstErr = err
@@ -70,11 +80,6 @@ func buildCandidates(cfg config) ([]candidate, error) {
 			}
 		})
 	}
-
-	for i := range children {
-		jobs <- i
-	}
-	close(jobs)
 	wg.Wait()
 	if firstErr != nil {
 		return nil, firstErr
@@ -87,12 +92,24 @@ func buildCandidates(cfg config) ([]candidate, error) {
 }
 
 func inspectRepoEntry(cfg config, child childDir, inspect bool) (repoDetails, error) {
+	return inspectRepoEntryWithCache(cfg, child, inspect, nil)
+}
+
+func inspectRepoEntryWithCache(cfg config, child childDir, inspect bool, epochCache *gitEpochCache) (repoDetails, error) {
+	if cfg.recency == recencyGit && child.isDir {
+		detail, err := inspectRepoWithCache(cfg, child, inspect, epochCache)
+		if errors.Is(err, os.ErrNotExist) {
+			return repoDetails{}, nil
+		}
+		return detail, err
+	}
+
 	info, err := os.Stat(child.path)
 	if err != nil || !info.IsDir() {
 		return repoDetails{}, nil
 	}
 	child.modEpoch = info.ModTime().Unix()
-	return inspectRepo(cfg, child, inspect)
+	return inspectRepoWithCache(cfg, child, inspect, epochCache)
 }
 
 func compactRepoDetails(details []repoDetails) []repoDetails {
@@ -106,6 +123,10 @@ func compactRepoDetails(details []repoDetails) []repoDetails {
 }
 
 func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) {
+	return inspectRepoWithCache(cfg, child, inspect, nil)
+}
+
+func inspectRepoWithCache(cfg config, child childDir, inspect bool, epochCache *gitEpochCache) (repoDetails, error) {
 	facts := dirFacts{}
 	if inspect {
 		needGit := cfg.showGit || cfg.recency == recencyGit
@@ -120,10 +141,16 @@ func inspectRepo(cfg config, child childDir, inspect bool) (repoDetails, error) 
 	epoch := child.modEpoch
 	git := gitMeta{}
 	if facts.hasGit && (cfg.showGit || cfg.recency == recencyGit) {
-		git = inspectGitMeta(child.path, facts.gitIsDir, cfg.showGit, cfg.recency == recencyGit, cfg.gitDirty && cfg.showGit)
+		git = inspectGitMetaWithKnownDir(child.path, facts.gitIsDir, facts.gitDir, cfg.showGit, cfg.recency == recencyGit, cfg.gitDirty && cfg.showGit, epochCache)
 	}
 	if cfg.recency == recencyGit && git.epoch > 0 {
 		epoch = git.epoch
+	} else if cfg.recency == recencyGit && child.isDir && child.modEpoch == 0 {
+		if info, statErr := os.Stat(child.path); statErr == nil {
+			epoch = info.ModTime().Unix()
+		} else {
+			return repoDetails{}, nil
+		}
 	}
 
 	lang := ""
@@ -285,6 +312,13 @@ func collectDirFacts(dir string, needGit, needLanguage bool) (dirFacts, error) {
 			case ".git":
 				facts.hasGit = true
 				facts.gitIsDir = entry.IsDir()
+				if !facts.gitIsDir {
+					if content, readErr := os.ReadFile(filepath.Join(dir, ".git")); readErr == nil {
+						if gitDir, _, parseErr := parseGitDirFile(dir, content); parseErr == nil {
+							facts.gitDir = gitDir
+						}
+					}
+				}
 			case "go.mod":
 				facts.hasGoMod = true
 			case "Cargo.toml":

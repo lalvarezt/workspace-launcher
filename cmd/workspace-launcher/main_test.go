@@ -7,12 +7,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestParseConfigDefaultsToBoundedScanJobs(t *testing.T) {
+	t.Setenv("WORKSPACE_LAUNCHER_JOBS", "")
+	cfg, err := parseConfig([]string{t.TempDir()})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	want := min(max(runtime.NumCPU(), 1), defaultScanJobs)
+	if cfg.jobs != want {
+		t.Fatalf("unexpected default jobs: got %d want %d", cfg.jobs, want)
+	}
+}
 
 func TestReadBufferedLineHandlesLongLines(t *testing.T) {
 	longLine := strings.Repeat("x", 64)
@@ -45,6 +61,58 @@ func TestGitLastCommitEpochFastLooseObject(t *testing.T) {
 	}
 	if epoch != 1700000000 {
 		t.Fatalf("unexpected epoch: got %d want %d", epoch, 1700000000)
+	}
+}
+
+func TestInspectGitMetaWithCacheReusesCommitEpoch(t *testing.T) {
+	repo := initTestRepo(t)
+	commitAt(t, repo, "1700000050", "cached")
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	runGit(t, repo, "worktree", "add", "--detach", "-q", worktree)
+	facts, err := collectDirFacts(worktree, true, false)
+	if err != nil {
+		t.Fatalf("collectDirFacts returned error: %v", err)
+	}
+	if !facts.hasGit || facts.gitIsDir || facts.gitDir == "" {
+		t.Fatalf("unexpected linked worktree facts: %+v", facts)
+	}
+
+	cache := &gitEpochCache{}
+	first := inspectGitMetaWithKnownDir(worktree, facts.gitIsDir, facts.gitDir, true, true, false, cache)
+	if first.epoch != 1700000050 || first.headHash == "" || !first.isWorktree {
+		t.Fatalf("unexpected initial metadata: %+v", first)
+	}
+
+	objectPath := filepath.Join(repo, ".git", "objects", first.headHash[:2], first.headHash[2:])
+	if err := os.Remove(objectPath); err != nil {
+		t.Fatalf("remove commit object: %v", err)
+	}
+
+	second := inspectGitMetaWithKnownDir(worktree, facts.gitIsDir, facts.gitDir, true, true, false, cache)
+	if second.epoch != first.epoch {
+		t.Fatalf("cached epoch was not reused: got %d want %d", second.epoch, first.epoch)
+	}
+}
+
+func TestGitEpochCacheCoalescesConcurrentReads(t *testing.T) {
+	cache := &gitEpochCache{}
+	var reads atomic.Int32
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			epoch, err := cache.load("shared-hash", func() (int64, error) {
+				reads.Add(1)
+				time.Sleep(5 * time.Millisecond)
+				return 1700000050, nil
+			})
+			if err != nil || epoch != 1700000050 {
+				t.Errorf("unexpected cached read: epoch=%d err=%v", epoch, err)
+			}
+		})
+	}
+	wg.Wait()
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("commit epoch was read %d times, want once", got)
 	}
 }
 
@@ -212,6 +280,18 @@ func TestInspectGitMetaWorktreeUnderModulesPath(t *testing.T) {
 	}
 }
 
+func TestClassifyLinkedGitDirUsesLastGitComponent(t *testing.T) {
+	base := t.TempDir()
+	for _, gitDir := range []string{
+		filepath.Join(base, ".git", "modules", "nested", "repo", ".git", "worktrees", "wt"),
+		filepath.Join(base, ".git", "modules", "nested", "repo", ".git"),
+	} {
+		if isSubmodule, _ := classifyLinkedGitDir(gitDir, true); isSubmodule {
+			t.Fatalf("unexpected submodule classification for %q", gitDir)
+		}
+	}
+}
+
 func TestDescribeRepoFallsBackToMtimeWhenGitHasNoCommits(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "empty-git")
@@ -244,6 +324,40 @@ func TestDescribeRepoFallsBackToMtimeWhenGitHasNoCommits(t *testing.T) {
 	}
 	if cand.epoch != mtime.Unix() {
 		t.Fatalf("unexpected epoch: got %d want %d", cand.epoch, mtime.Unix())
+	}
+}
+
+func TestBuildCandidatesGitRecencyFallsBackToMtime(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "empty-git")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	runGit(t, repo, "init")
+
+	mtime := time.Unix(1700000450, 0)
+	if err := os.Chtimes(repo, mtime, mtime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	cfg := config{
+		roots:        []string{root},
+		jobs:         2,
+		recency:      recencyGit,
+		showLanguage: false,
+		showGit:      false,
+		now:          1700000500,
+		nameWidth:    32,
+	}
+	cands, err := buildCandidates(cfg)
+	if err != nil {
+		t.Fatalf("buildCandidates returned error: %v", err)
+	}
+	if len(cands) != 1 {
+		t.Fatalf("unexpected candidate count: got %d want 1", len(cands))
+	}
+	if cands[0].epoch != mtime.Unix() {
+		t.Fatalf("unexpected fallback epoch: got %d want %d", cands[0].epoch, mtime.Unix())
 	}
 }
 

@@ -191,7 +191,7 @@ Configuration is done with environment variables:
 | `WORKSPACE_LAUNCHER_RECENCY`         | Recency mode: `mtime` (default) or `git`.                                  |
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
 | `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git metadata column by default.                                  |
-| `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Clamped between `1` and the detected CPU count. |
+| `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Defaults to at most `8`; explicit values are clamped between `1` and the detected CPU count. |
 | `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Highlights dirty git entries.                                              |
 | `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
 
