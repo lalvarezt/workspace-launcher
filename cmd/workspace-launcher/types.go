@@ -39,26 +39,37 @@ const (
 )
 
 const (
-	cReset     = "\033[0m"
-	cDim       = "\033[38;5;244m"
-	cName      = "\033[38;5;252m"
-	cCurrent   = "\033[38;5;223m"
-	cRootText  = "\033[38;5;235m"
-	cRootBadge = "\033[48;5;151m"
-	cGo        = "\033[38;5;81m"
-	cRust      = "\033[38;5;209m"
-	cPython    = "\033[38;5;221m"
-	cNode      = "\033[38;5;78m"
-	cLua       = "\033[38;5;111m"
-	cRuby      = "\033[38;5;203m"
-	cNix       = "\033[38;5;110m"
-	cMisc      = "\033[38;5;180m"
-	cGit       = "\033[38;5;109m"
-	cGitDirty  = "\033[38;5;215m"
-	cWorktree  = "\033[38;5;151m"
-	cGitLock   = "\033[38;5;180m"
-	cSubmodule = "\033[38;5;179m"
-	cTime      = "\033[38;5;246m"
+	cReset          = "\033[0m"
+	cDim            = "\033[38;5;244m"
+	cName           = "\033[38;5;252m"
+	cCurrent        = "\033[38;5;223m"
+	cRootText       = "\033[38;5;235m"
+	cRootBadge      = "\033[48;5;151m"
+	cGo             = "\033[38;5;81m"
+	cRust           = "\033[38;5;209m"
+	cPython         = "\033[38;5;221m"
+	cNode           = "\033[38;5;78m"
+	cLua            = "\033[38;5;111m"
+	cRuby           = "\033[38;5;203m"
+	cNix            = "\033[38;5;110m"
+	cMisc           = "\033[38;5;180m"
+	cGit            = "\033[38;5;109m"
+	cGitDirty       = "\033[38;5;215m"
+	cGitUnavailable = "\033[38;5;167m"
+	cWorktree       = "\033[38;5;151m"
+	cGitLock        = "\033[38;5;180m"
+	cSubmodule      = "\033[38;5;179m"
+	cTime           = "\033[38;5;246m"
+)
+
+type dirtyStatus uint8
+
+const (
+	dirtyStatusUnset dirtyStatus = iota
+	dirtyStatusPending
+	dirtyStatusClean
+	dirtyStatusDirty
+	dirtyStatusUnavailable
 )
 
 type config struct {
@@ -70,6 +81,8 @@ type config struct {
 	rootLabels      map[string]string
 	jobs            int
 	gitDirty        bool
+	deferGitDirty   bool
+	refreshEnabled  bool
 	recency         string
 	showLanguage    bool
 	showGit         bool
@@ -102,6 +115,7 @@ type candidate struct {
 	branchText string
 	searchText string
 	epoch      int64
+	detail     *repoDetails
 }
 
 type pickerResult struct {
@@ -146,6 +160,7 @@ type gitMeta struct {
 	headHash    string
 	epoch       int64
 	dirty       bool
+	dirtyStatus dirtyStatus
 }
 
 type gitLayout struct {
@@ -165,6 +180,8 @@ type pickerState struct {
 	candidatesFile string
 	cycleFile      string
 	filterFile     string
+	refreshFile    string
+	listenSocket   string
 }
 
 type exitCodeError struct {

@@ -45,6 +45,12 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (pickerResult,
 	}
 
 	writeErr := writeCandidates(stdin, candidates)
+	var runtime *pickerRuntime
+	if writeErr == nil && state.listenSocket != "" {
+		runtime = newPickerRuntime(cfg, state, candidates)
+		runtime.Start()
+		defer runtime.Stop()
+	}
 	waitErr := cmd.Wait()
 	if isPickerAbort(waitErr) {
 		if writeErr == nil || isClosedPickerPipe(writeErr) {
@@ -70,7 +76,8 @@ func pickRepo(cfg config, fzfPath string, candidates []candidate) (pickerResult,
 }
 
 func createPickerState(cfg config, candidates []candidate) (pickerState, error) {
-	if len(cfg.roots) < 2 {
+	needsDynamicState := cfg.refreshEnabled || (cfg.gitDirty && cfg.deferGitDirty)
+	if len(cfg.roots) < 2 && !needsDynamicState {
 		return pickerState{}, nil
 	}
 
@@ -84,11 +91,20 @@ func createPickerState(cfg config, candidates []candidate) (pickerState, error) 
 		rootFile:       filepath.Join(dir, "active-root"),
 		footerFile:     filepath.Join(dir, "footer"),
 		candidatesFile: filepath.Join(dir, "candidates"),
-		cycleFile:      filepath.Join(dir, "cycle-root.sh"),
 		filterFile:     filepath.Join(dir, "filter-root.sh"),
+	}
+	if len(cfg.roots) >= 2 {
+		state.cycleFile = filepath.Join(dir, "cycle-root.sh")
+	}
+	if needsDynamicState {
+		state.refreshFile = filepath.Join(dir, "refresh-request")
+		state.listenSocket = filepath.Join(dir, "fzf.sock")
 	}
 
 	initialRoot := activeRootAll
+	if len(cfg.roots) == 1 {
+		initialRoot = cfg.roots[0]
+	}
 	if err := os.WriteFile(state.rootFile, []byte(initialRoot), 0o600); err != nil {
 		os.RemoveAll(dir)
 		return pickerState{}, err
@@ -101,9 +117,17 @@ func createPickerState(cfg config, candidates []candidate) (pickerState, error) 
 		os.RemoveAll(dir)
 		return pickerState{}, err
 	}
-	if err := os.WriteFile(state.cycleFile, []byte(buildCycleRootScript(cfg)), 0o700); err != nil {
-		os.RemoveAll(dir)
-		return pickerState{}, err
+	if state.refreshFile != "" {
+		if err := os.WriteFile(state.refreshFile, nil, 0o600); err != nil {
+			os.RemoveAll(dir)
+			return pickerState{}, err
+		}
+	}
+	if state.cycleFile != "" {
+		if err := os.WriteFile(state.cycleFile, []byte(buildCycleRootScript(cfg)), 0o700); err != nil {
+			os.RemoveAll(dir)
+			return pickerState{}, err
+		}
 	}
 	if err := os.WriteFile(state.filterFile, []byte(buildFilterCandidatesScript()), 0o700); err != nil {
 		os.RemoveAll(dir)
@@ -133,6 +157,12 @@ func baseFzfArgs(cfg config, state pickerState) []string {
 			"--bind=ctrl-r:execute-silent("+shellSingleQuote(state.cycleFile)+" "+shellSingleQuote(state.rootFile)+" "+shellSingleQuote(state.footerFile)+")+reload("+shellSingleQuote(state.filterFile)+" "+shellSingleQuote(state.rootFile)+" "+shellSingleQuote(state.candidatesFile)+")+transform-footer(cat "+shellSingleQuote(state.footerFile)+")",
 		)
 	}
+	if state.listenSocket != "" {
+		args = append(args, "--track", "--id-nth=1", "--listen="+state.listenSocket)
+	}
+	if state.refreshFile != "" {
+		args = append(args, "--bind=f5:execute-silent(printf 1 > "+shellSingleQuote(state.refreshFile)+")")
+	}
 
 	return args
 }
@@ -146,6 +176,9 @@ func fzfStyleArgs(cfg config, state pickerState) []string {
 	ghostText := "Type to filter, Enter to open, Ctrl-E to edit, Ctrl-N to create"
 	if state.cycleFile != "" {
 		ghostText += ", Ctrl-R to switch root"
+	}
+	if state.refreshFile != "" {
+		ghostText += ", F5 to refresh"
 	}
 
 	switch effectiveFzfStyle(cfg.fzfStyle) {
@@ -212,7 +245,8 @@ func fzfSearchNth(cfg config) string {
 
 func pickRepoHeadless(cfg config, candidates []candidate) (pickerResult, error) {
 	query := strings.ToLower(cfg.initialQuery)
-	for _, cand := range candidates {
+	for i := range candidates {
+		cand := &candidates[i]
 		if query == "" || strings.Contains(candidateSearchText(cand), query) {
 			return pickerResult{selection: serializeCandidate(cand), createRoot: defaultCreateRoot(cfg)}, nil
 		}
@@ -222,8 +256,13 @@ func pickRepoHeadless(cfg config, candidates []candidate) (pickerResult, error) 
 
 func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 	defer w.Close()
+	return writeSerializedCandidates(w, candidates)
+}
+
+func writeSerializedCandidates(w io.Writer, candidates []candidate) error {
 	buf := bufio.NewWriterSize(w, 1<<20)
-	for _, cand := range candidates {
+	for i := range candidates {
+		cand := &candidates[i]
 		if _, err := buf.WriteString(serializeCandidate(cand)); err != nil {
 			return err
 		}
@@ -240,17 +279,7 @@ func writeCandidateFile(path string, candidates []candidate) error {
 		return err
 	}
 	defer file.Close()
-
-	buf := bufio.NewWriterSize(file, 1<<20)
-	for _, cand := range candidates {
-		if _, err := buf.WriteString(serializeCandidate(cand)); err != nil {
-			return err
-		}
-		if err := buf.WriteByte('\n'); err != nil {
-			return err
-		}
-	}
-	return buf.Flush()
+	return writeSerializedCandidates(file, candidates)
 }
 
 func isPickerAbort(err error) bool {
@@ -262,11 +291,11 @@ func isClosedPickerPipe(err error) bool {
 	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, os.ErrClosed) || errors.Is(err, syscall.EPIPE)
 }
 
-func serializeCandidate(cand candidate) string {
+func serializeCandidate(cand *candidate) string {
 	return cand.path + "\t" + cand.matchText + "\t\t" + cand.branchText + "\t" + cand.display
 }
 
-func candidateSearchText(cand candidate) string {
+func candidateSearchText(cand *candidate) string {
 	if cand.searchText != "" {
 		return cand.searchText
 	}
@@ -295,11 +324,15 @@ func defaultFooterText() string {
 }
 
 func createFooterText(cfg config, root string) string {
+	refreshText := ""
+	if cfg.refreshEnabled {
+		refreshText = " | F5 refresh"
+	}
 	if len(cfg.roots) < 2 {
-		return defaultFooterText()
+		return "Enter open | Ctrl-E edit | Ctrl-N create" + refreshText + " | Esc quit"
 	}
 
-	return renderFooterRootBadge(cfg, root) + "  Enter open | Ctrl-E edit | Ctrl-N create | Ctrl-R switch root | Esc quit"
+	return renderFooterRootBadge(cfg, root) + "  Enter open | Ctrl-E edit | Ctrl-N create | Ctrl-R switch root" + refreshText + " | Esc quit"
 }
 
 func pickerRootLabel(cfg config, root string) string {

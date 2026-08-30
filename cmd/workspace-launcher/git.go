@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type resettableZlibReader interface {
@@ -132,9 +134,7 @@ func inspectGitMetaWithKnownDir(dir string, gitIsDir bool, knownGitDir string, w
 			}
 		}
 		if wantDirty {
-			if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
-				meta.dirty = dirty
-			}
+			meta.dirty, meta.dirtyStatus = readDirtyStatus(context.Background(), dir)
 		}
 		return meta
 	}
@@ -149,9 +149,7 @@ func inspectGitMetaWithKnownDir(dir string, gitIsDir bool, knownGitDir string, w
 		gitDir, isWorktree, err = inspectDotGit(dir)
 		if err != nil {
 			if wantDirty {
-				if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
-					meta.dirty = dirty
-				}
+				meta.dirty, meta.dirtyStatus = readDirtyStatus(context.Background(), dir)
 			}
 			if wantEpoch {
 				if epoch, epochErr := gitLastCommitEpochSlow(dir); epochErr == nil && epoch > 0 {
@@ -207,9 +205,7 @@ func inspectGitMetaWithKnownDir(dir string, gitIsDir bool, knownGitDir string, w
 		}
 	}
 	if wantDirty {
-		if dirty, dirtyErr := gitIsDirty(dir); dirtyErr == nil {
-			meta.dirty = dirty
-		}
+		meta.dirty, meta.dirtyStatus = readDirtyStatus(context.Background(), dir)
 	}
 
 	return meta
@@ -672,7 +668,26 @@ func parseCommitterEpoch(line string) (string, error) {
 }
 
 func gitIsDirty(dir string) (bool, error) {
-	cmd := exec.Command("git", "-C", dir, "status", "--porcelain", "--untracked-files=normal")
+	return gitIsDirtyContext(context.Background(), dir)
+}
+
+func readDirtyStatus(ctx context.Context, dir string) (bool, dirtyStatus) {
+	checkCtx, cancel := context.WithTimeout(ctx, gitDirtyCheckTimeout)
+	defer cancel()
+	dirty, err := gitIsDirtyContext(checkCtx, dir)
+	if err != nil {
+		return false, dirtyStatusUnavailable
+	}
+	if dirty {
+		return true, dirtyStatusDirty
+	}
+	return false, dirtyStatusClean
+}
+
+const gitDirtyCheckTimeout = time.Second
+
+func gitIsDirtyContext(ctx context.Context, dir string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain", "--untracked-files=normal")
 	output, err := cmd.Output()
 	if err != nil {
 		return false, err

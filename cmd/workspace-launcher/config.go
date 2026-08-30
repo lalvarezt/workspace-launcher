@@ -22,16 +22,18 @@ func parseConfig(args []string) (config, error) {
 	roots := parseRootList(getenvDefault("WORKSPACE_LAUNCHER_ROOT", "~/git-repos"))
 	jobs := clampJobs(parsePositiveEnvInt("WORKSPACE_LAUNCHER_JOBS", defaultJobs), maxJobs)
 	cfg := config{
-		mode:          modePath,
-		fzfStyle:      fzfStyleFull,
-		roots:         roots,
-		jobs:          jobs,
-		gitDirty:      os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
-		recency:       recencyMtime,
-		showLanguage:  os.Getenv("WORKSPACE_LAUNCHER_SHOW_LANGUAGE") != "0",
-		showGit:       os.Getenv("WORKSPACE_LAUNCHER_SHOW_GIT") != "0",
-		headlessBench: os.Getenv("WORKSPACE_LAUNCHER_BENCH_MODE") == "headless",
-		now:           time.Now().Unix(),
+		mode:           modePath,
+		fzfStyle:       fzfStyleFull,
+		roots:          roots,
+		jobs:           jobs,
+		gitDirty:       os.Getenv("WORKSPACE_LAUNCHER_GIT_DIRTY") == "1",
+		deferGitDirty:  true,
+		refreshEnabled: true,
+		recency:        recencyMtime,
+		showLanguage:   os.Getenv("WORKSPACE_LAUNCHER_SHOW_LANGUAGE") != "0",
+		showGit:        os.Getenv("WORKSPACE_LAUNCHER_SHOW_GIT") != "0",
+		headlessBench:  os.Getenv("WORKSPACE_LAUNCHER_BENCH_MODE") == "headless",
+		now:            time.Now().Unix(),
 	}
 	if os.Getenv("WORKSPACE_LAUNCHER_RECENCY") == recencyGit {
 		cfg.recency = recencyGit
@@ -81,6 +83,10 @@ func parseConfig(args []string) (config, error) {
 			cfg.showGit = true
 		case arg == "--no-git":
 			cfg.showGit = false
+		case arg == "--dirty":
+			cfg.gitDirty = true
+		case arg == "--no-dirty":
+			cfg.gitDirty = false
 		case arg == "-v" || arg == "--version":
 			if _, err := fmt.Fprintf(os.Stdout, "%s %s\n", appName, version); err != nil {
 				return config{}, err
@@ -147,7 +153,7 @@ func parseConfig(args []string) (config, error) {
 }
 
 func printUsage() error {
-	_, err := fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
+	_, err := fmt.Fprintf(os.Stdout, `Usage: %s [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [--[no-]dirty] [-v|--version] [ROOT...]
 
 Launch an fzf-based directory picker for directories under one or more roots.
 Selecting an existing entry opens that directory; submitting a new query creates it.
@@ -164,8 +170,10 @@ Options:
                    Picker style: full (default), minimal, or plain
   --language       Show the language column (default)
   --no-language    Hide the language column
-  --git            Show the git metadata column (default)
-  --no-git         Hide the git metadata column
+  --git             Show the git metadata column (default)
+  --no-git          Hide the git metadata column
+  --dirty           Check and highlight dirty git entries after launch
+  --no-dirty        Disable dirty git checks
   -v, --version    Show version
   -h, --help       Show this help text
   ROOT...          Root directories or filepath glob patterns

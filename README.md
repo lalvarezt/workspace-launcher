@@ -30,12 +30,13 @@ trees such as `~/.config` or `~/src`.
 - `Ctrl-N` creates a new directory from the active query.
 - `Ctrl-E` opens the selected directory in `$VISUAL` or `$EDITOR`.
 - `Ctrl-R` cycles the active create root in multi-root mode.
+- `F5` refreshes the active root while keeping the current query and selection.
 - Supports native bash, zsh, and fish shell integration.
 
 ## Requirements
 
 - Go 1.26 or newer to build or install from source
-- `fzf` in `PATH`, unless you provide a vendored binary at `bin/fzf`
+- A recent `fzf` in `PATH` with `--listen` and `--track` support, unless you provide a vendored binary at `bin/fzf`
 - `git` if you want git/worktree metadata or git-based recency sorting
 
 ## Usage
@@ -145,6 +146,7 @@ WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 - `Ctrl-N`: create a new directory from the current query
 - `Ctrl-E`: open the selected directory in `$VISUAL` or `$EDITOR`
 - `Ctrl-R`: cycle the active create root in multi-root mode
+- `F5`: rescan the active root without clearing the query or selection
 - `Esc`: quit
 
 ## Picker Styling
@@ -165,7 +167,7 @@ workspace-launcher --fzf-style=plain --no-language --no-git ~/.config
 ## CLI Options
 
 ```text
-Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [-v|--version] [ROOT...]
+Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--fzf-style STYLE] [--[no-]language] [--[no-]git] [--[no-]dirty] [-v|--version] [ROOT...]
 ```
 
 - `--bash`: print bash shell integration; load with `source <(workspace-launcher --bash)`
@@ -176,6 +178,8 @@ Usage: workspace-launcher [--bash|--zsh|--fish] [--bindings] [--query TEXT] [--f
 - `--fzf-style STYLE`: picker style: `full` (default), `minimal`, or `plain`
 - `--language` / `--no-language`: show or hide the language column
 - `--git` / `--no-git`: show or hide the git metadata column
+- `--dirty`: enable deferred dirty-worktree checks
+- `--no-dirty`: disable dirty-worktree checks, including those enabled by the environment
 - `-h` / `--help`: show help text
 - `-v` / `--version`: show version
 - `ROOT...`: override the default root directories for this run; each value may
@@ -192,7 +196,7 @@ Configuration is done with environment variables:
 | `WORKSPACE_LAUNCHER_SHOW_LANGUAGE=0` | Hides the language column by default.                                      |
 | `WORKSPACE_LAUNCHER_SHOW_GIT=0`      | Hides the git metadata column by default.                                  |
 | `WORKSPACE_LAUNCHER_JOBS`            | Parallel metadata workers. Defaults to at most `8`; explicit values are clamped between `1` and the detected CPU count. |
-| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Highlights dirty git entries.                                              |
+| `WORKSPACE_LAUNCHER_GIT_DIRTY=1`     | Enables deferred dirty-worktree checks and highlights dirty git entries.   |
 | `FZF_BIN`                            | Overrides the `fzf` binary path.                                           |
 
 ### Dynamic roots
@@ -294,6 +298,9 @@ go run ./cmd/bench-setup
 - In multi-root mode, create actions use the active create root.
 - Language detection is heuristic-based and checks for common project files.
 - Git metadata is only shown for directories that contain `.git`.
+- Dirty-worktree checks are opt-in (`--dirty` or `WORKSPACE_LAUNCHER_GIT_DIRTY=1`).
+  They run after the picker opens and update rows in small batches, so large roots
+  stay responsive. Use `--no-dirty` to override the environment setting.
 
 ## Benchmarking
 

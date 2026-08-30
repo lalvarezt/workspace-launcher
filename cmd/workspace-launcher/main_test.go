@@ -1757,7 +1757,7 @@ func TestResolveSelectionUsesCurrentCreateRootForCtrlNEvenWithSelection(t *testi
 	rootB := t.TempDir()
 	cfg := config{roots: []string{rootA, rootB}}
 
-	selected := serializeCandidate(candidate{
+	selected := serializeCandidate(&candidate{
 		path:      filepath.Join(rootB, "existing"),
 		display:   "existing",
 		matchText: "existing",

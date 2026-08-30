@@ -426,8 +426,19 @@ func renderGitFieldStyled(meta gitMeta, branch string, width int, styled bool) s
 	case meta.isSubmodule:
 		color = cSubmodule
 	}
-	if meta.dirty {
+	switch meta.dirtyStatus {
+	case dirtyStatusPending:
+		color = cDim
+	case dirtyStatusDirty:
 		color = cGitDirty
+	case dirtyStatusUnavailable:
+		color = cGitUnavailable
+	case dirtyStatusClean:
+		// Keep the repository/worktree color selected above.
+	default:
+		if meta.dirty {
+			color = cGitDirty
+		}
 	}
 
 	return paintFieldStyled(styled, color, fitField(gitFieldText(meta, branch), width))

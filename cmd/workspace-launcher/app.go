@@ -52,12 +52,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].epoch == candidates[j].epoch {
-			return candidates[i].path < candidates[j].path
-		}
-		return candidates[i].epoch > candidates[j].epoch
-	})
+	sortCandidates(candidates)
 
 	result, err := pickRepo(cfg, fzfPath, candidates)
 	if err != nil {
@@ -73,4 +68,13 @@ func run() error {
 	}
 	_, err = fmt.Fprintln(os.Stdout, target)
 	return err
+}
+
+func sortCandidates(candidates []candidate) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].epoch == candidates[j].epoch {
+			return candidates[i].path < candidates[j].path
+		}
+		return candidates[i].epoch > candidates[j].epoch
+	})
 }
