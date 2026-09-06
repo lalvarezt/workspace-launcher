@@ -182,7 +182,7 @@ func inspectGitMetaWithKnownDir(dir string, gitIsDir bool, knownGitDir string, w
 					var epoch int64
 					var readErr error
 					if meta.isWorktree {
-						epoch, readErr = readCommitEpochWithCache(layout, hash, cache)
+						epoch, readErr = readCommitEpochWithCache(dir, layout, hash, cache)
 					} else {
 						epoch, readErr = readCommitEpoch(layout, hash)
 					}
@@ -211,9 +211,15 @@ func inspectGitMetaWithKnownDir(dir string, gitIsDir bool, knownGitDir string, w
 	return meta
 }
 
-func readCommitEpochWithCache(layout gitLayout, hash string, cache *gitEpochCache) (int64, error) {
+func readCommitEpochWithCache(dir string, layout gitLayout, hash string, cache *gitEpochCache) (int64, error) {
 	return cache.load(hash, func() (int64, error) {
-		return readCommitEpoch(layout, hash)
+		epoch, err := readCommitEpoch(layout, hash)
+		if err == nil && epoch > 0 {
+			return epoch, nil
+		}
+		// Pin the fallback to the cache key even if HEAD moves during the scan.
+		// Read the original object, matching the loose-object path.
+		return gitCommitEpochSlow(dir, hash)
 	})
 }
 
@@ -266,6 +272,15 @@ func gitLastCommitEpochFast(dir string) (int64, error) {
 
 func gitLastCommitEpochSlow(dir string) (int64, error) {
 	cmd := exec.Command("git", "-C", dir, "-c", "log.showSignature=false", "log", "-1", "--format=%ct")
+	return readGitEpochOutput(cmd)
+}
+
+func gitCommitEpochSlow(dir, hash string) (int64, error) {
+	cmd := exec.Command("git", "-C", dir, "--no-replace-objects", "-c", "log.showSignature=false", "log", "-1", "--format=%ct", "--end-of-options", hash, "--")
+	return readGitEpochOutput(cmd)
+}
+
+func readGitEpochOutput(cmd *exec.Cmd) (int64, error) {
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, err

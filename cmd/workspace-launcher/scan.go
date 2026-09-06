@@ -170,6 +170,15 @@ func inspectRepoWithCache(cfg config, child childDir, inspect bool, epochCache *
 }
 
 func renderCandidates(cfg config, details []repoDetails) []candidate {
+	cfg = candidateLayout(cfg, details)
+	out := make([]candidate, len(details))
+	for i := range details {
+		out[i] = renderCandidate(cfg, &details[i])
+	}
+	return out
+}
+
+func candidateLayout(cfg config, details []repoDetails) config {
 	cfg.nameWidth = computeNameColumnWidth(details)
 	cfg.ageColumnWidth = computeAgeColumnWidth(cfg.now, details)
 	if cfg.showLanguage {
@@ -183,12 +192,7 @@ func renderCandidates(cfg config, details []repoDetails) []candidate {
 		cfg.gitColumnWidth = 0
 	}
 	applyLayoutWidths(&cfg)
-
-	out := make([]candidate, len(details))
-	for i := range details {
-		out[i] = renderCandidate(cfg, &details[i])
-	}
-	return out
+	return cfg
 }
 
 func renderCandidate(cfg config, detail *repoDetails) candidate {

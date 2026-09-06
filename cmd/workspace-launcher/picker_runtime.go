@@ -36,9 +36,12 @@ type dirtyJob struct {
 }
 
 type pickerRuntime struct {
-	cfg        config
-	state      pickerState
-	candidates []candidate
+	cfg            config
+	state          pickerState
+	candidates     []candidate
+	candidateIndex map[string]int
+	changedRows    []bool
+	renderedWidths [5]int
 
 	mu           sync.RWMutex
 	ctx          context.Context
@@ -223,19 +226,35 @@ func runDirtyStatus(ctx context.Context, jobs int, generation uint64, entries []
 func (r *pickerRuntime) applyDirtyUpdate(update dirtyUpdate) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for i := range r.candidates {
-		if r.candidates[i].path != update.path {
-			continue
+	if r.candidateIndex == nil {
+		r.candidateIndex = make(map[string]int, len(r.candidates))
+		for i := range r.candidates {
+			path := r.candidates[i].path
+			if _, exists := r.candidateIndex[path]; !exists {
+				r.candidateIndex[path] = i
+			}
 		}
-		detail := r.candidates[i].detail
-		if detail == nil || !detail.git.present {
-			return false
-		}
-		detail.git.dirty = update.dirty
-		detail.git.dirtyStatus = update.status
-		return true
 	}
-	return false
+	i, ok := r.candidateIndex[update.path]
+	if !ok {
+		return false
+	}
+	detail := r.candidates[i].detail
+	if detail == nil || !detail.git.present {
+		return false
+	}
+	detail.git.dirty = update.dirty
+	detail.git.dirtyStatus = update.status
+	r.markRowChanged(i)
+	return true
+}
+
+// Called with r.mu held. Only status updates change rows between refreshes.
+func (r *pickerRuntime) markRowChanged(i int) {
+	if len(r.changedRows) != len(r.candidates) {
+		r.changedRows = make([]bool, len(r.candidates))
+	}
+	r.changedRows[i] = true
 }
 
 func (r *pickerRuntime) markPending(root string) bool {
@@ -252,6 +271,7 @@ func (r *pickerRuntime) markPending(root string) bool {
 		}
 		detail.git.dirty = false
 		detail.git.dirtyStatus = dirtyStatusPending
+		r.markRowChanged(i)
 		changed = true
 	}
 	return changed
@@ -278,9 +298,23 @@ func (r *pickerRuntime) flushCandidates(footerStatus ...string) error {
 			details[i] = *r.candidates[i].detail
 		}
 	}
-	r.candidates = renderCandidates(r.cfg, details)
+	cfg := candidateLayout(r.cfg, details)
+	widths := [5]int{cfg.nameWidth, cfg.ageColumnWidth, cfg.langColumnWidth, cfg.gitColumnWidth, cfg.rootLabelWidth}
+	layoutChanged := widths != r.renderedWidths
 	snapshot := make([]candidate, len(r.candidates))
-	copy(snapshot, r.candidates)
+	for i := range r.candidates {
+		if layoutChanged {
+			snapshot[i] = renderCandidate(cfg, &details[i])
+		} else if i < len(r.changedRows) && r.changedRows[i] {
+			// Reuse the row's detail so it cannot retain the temporary slice.
+			snapshot[i] = renderCandidate(cfg, r.candidates[i].detail)
+		} else {
+			snapshot[i] = r.candidates[i]
+		}
+	}
+	r.candidates = snapshot
+	r.renderedWidths = widths
+	clear(r.changedRows)
 	r.mu.Unlock()
 
 	if err := writeCandidateFileAtomic(r.state.candidatesFile, snapshot); err != nil {
@@ -344,6 +378,10 @@ func (r *pickerRuntime) refreshActiveRoot(updates chan<- dirtyUpdate, done chan<
 		}
 		r.candidates = renderCandidates(r.cfg, details)
 	}
+	// Refresh can add, remove, and reorder candidates. Flushes preserve order.
+	r.candidateIndex = nil
+	r.changedRows = nil
+	r.renderedWidths = [5]int{}
 	snapshot := make([]candidate, len(r.candidates))
 	copy(snapshot, r.candidates)
 	r.mu.Unlock()
