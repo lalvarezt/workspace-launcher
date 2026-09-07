@@ -14,8 +14,9 @@ const (
 	modeZsh  = "zsh"
 	modeFish = "fish"
 
-	recencyMtime = "mtime"
-	recencyGit   = "git"
+	recencyMtime  = "mtime"
+	recencyGit    = "git"
+	recencyOpened = "opened"
 
 	fzfStyleFull    = "full"
 	fzfStyleMinimal = "minimal"
@@ -73,6 +74,9 @@ const (
 )
 
 type config struct {
+	state           workspaceState
+	stateAction     string
+	stateTarget     string
 	mode            string
 	shellBindings   bool
 	initialQuery    string
@@ -108,6 +112,8 @@ type childDir struct {
 }
 
 type candidate struct {
+	pinned     bool
+	opened     int64
 	path       string
 	rootText   string
 	display    string

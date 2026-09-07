@@ -35,14 +35,39 @@ func parseConfig(args []string) (config, error) {
 		headlessBench:  os.Getenv("WORKSPACE_LAUNCHER_BENCH_MODE") == "headless",
 		now:            time.Now().Unix(),
 	}
-	if os.Getenv("WORKSPACE_LAUNCHER_RECENCY") == recencyGit {
-		cfg.recency = recencyGit
+	if value := os.Getenv("WORKSPACE_LAUNCHER_RECENCY"); value == recencyGit || value == recencyOpened {
+		cfg.recency = value
 	}
 	rootSet := false
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
+		case arg == "--pin" || arg == "--unpin" || arg == "--clear-history":
+			if cfg.stateAction != "" {
+				return config{}, errors.New("use only one of --pin, --unpin, or --clear-history")
+			}
+			cfg.stateAction = arg
+			if arg != "--clear-history" {
+				i++
+				if i >= len(args) || args[i] == "" {
+					return config{}, fmt.Errorf("missing path for %s", arg)
+				}
+				cfg.stateTarget = args[i]
+			}
+		case arg == "--recency" || strings.HasPrefix(arg, "--recency="):
+			value := strings.TrimPrefix(arg, "--recency=")
+			if arg == "--recency" {
+				i++
+				if i >= len(args) {
+					return config{}, errors.New("missing value for --recency")
+				}
+				value = args[i]
+			}
+			if value != recencyMtime && value != recencyGit && value != recencyOpened {
+				return config{}, fmt.Errorf("invalid recency: %s", value)
+			}
+			cfg.recency = value
 		case arg == "--bash":
 			cfg.mode = modeBash
 		case arg == "--zsh":
@@ -117,6 +142,12 @@ func parseConfig(args []string) (config, error) {
 		}
 	}
 
+	if cfg.stateAction != "" {
+		if outputsShellIntegration(cfg.mode) || cfg.shellBindings || rootSet {
+			return config{}, errors.New("state commands cannot be combined with roots or shell integration")
+		}
+		return cfg, nil
+	}
 	if outputsShellIntegration(cfg.mode) {
 		return cfg, nil
 	}
@@ -166,6 +197,10 @@ Options:
   --fish           Print fish shell integration
   --bindings       Include default Ctrl-G shell bindings with shell integration
   --query TEXT     Start with an initial query
+  --recency MODE   Sort by mtime (default), git, or opened
+  --pin PATH       Pin a workspace above unpinned entries
+  --unpin PATH     Remove a workspace pin
+  --clear-history  Clear visit history, keeping pins
   --fzf-style STYLE
                    Picker style: full (default), minimal, or plain
   --language       Show the language column (default)
@@ -186,7 +221,7 @@ Environment:
   WORKSPACE_LAUNCHER_ROOT           Default root directories or glob patterns, split with the OS path list separator (default: ~/git-repos)
   WORKSPACE_LAUNCHER_JOBS           Parallel jobs (default: up to 8), clamped to 1..CPU count
   WORKSPACE_LAUNCHER_GIT_DIRTY      Highlight dirty git entries when set to 1 (default: 0)
-  WORKSPACE_LAUNCHER_RECENCY        Sort recency by directory mtime or latest git commit
+  WORKSPACE_LAUNCHER_RECENCY        Sort recency by mtime, git, or opened
   WORKSPACE_LAUNCHER_SHOW_LANGUAGE  Show the language column when set to 1 (default: 1)
   WORKSPACE_LAUNCHER_SHOW_GIT       Show the git metadata column when set to 1 (default: 1)
 `, filepath.Base(os.Args[0]))

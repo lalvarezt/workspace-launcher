@@ -196,6 +196,14 @@ func candidateLayout(cfg config, details []repoDetails) config {
 }
 
 func renderCandidate(cfg config, detail *repoDetails) candidate {
+	var entry workspaceEntry
+	if len(cfg.state) > 0 {
+		entry = cfg.state[canonicalWorkspacePath(detail.child.path)]
+	}
+	opened := int64(0)
+	if cfg.recency == recencyOpened {
+		opened = entry.LastOpened
+	}
 	styled := effectiveFzfStyle(cfg.fzfStyle) != fzfStylePlain
 	columns := visibleCandidateColumns(cfg)
 	defaultMarkerField := paintFieldStyled(styled, cDim, " ")
@@ -214,6 +222,9 @@ func renderCandidate(cfg config, detail *repoDetails) candidate {
 	markerField := defaultMarkerField
 	if isCurrentRepo(cfg.cwd, detail.child.path) {
 		markerField = paintFieldStyled(styled, cCurrent, "*")
+	}
+	if entry.Pinned {
+		markerField = paintFieldStyled(styled, cCurrent, "P")
 	}
 
 	var display strings.Builder
@@ -250,6 +261,8 @@ func renderCandidate(cfg config, detail *repoDetails) candidate {
 
 	detail.git = git
 	return candidate{
+		pinned:     entry.Pinned,
+		opened:     opened,
 		path:       detail.child.path,
 		rootText:   detail.child.rootLabel,
 		display:    display.String(),

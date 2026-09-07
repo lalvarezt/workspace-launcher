@@ -125,13 +125,17 @@ The icon is followed by the current branch or detached HEAD label when available
 
 ## Recency Modes
 
-Recency sorting is controlled with `WORKSPACE_LAUNCHER_RECENCY`.
+Recency sorting is controlled with `WORKSPACE_LAUNCHER_RECENCY` or `--recency MODE`.
+The command-line option takes precedence.
 
 - `mtime` (default): sorts by each child directory's modification time. This is
   the fastest mode and works well for generic directory trees.
 - `git`: sorts git repositories by the latest commit timestamp. For directories
   without `.git`, or when git metadata cannot be read, it falls back to
   directory `mtime`.
+- `opened`: sorts by the last successful selection, newest first. Unvisited
+  directories follow in modification-time order. The age column continues to
+  show directory modification age in this mode.
 
 Use git-based recency when your root mostly contains repositories and you want
 recent commit activity to matter more than filesystem `mtime`:
@@ -139,6 +143,38 @@ recent commit activity to matter more than filesystem `mtime`:
 ```sh
 WORKSPACE_LAUNCHER_RECENCY=git workspace-launcher --query fzf ~/src
 ```
+
+## Favorites and visit history
+
+Pin a workspace to keep it above unpinned entries in every recency mode:
+
+```sh
+workspace-launcher --pin ~/git-repos/workspace-launcher
+workspace-launcher --recency opened
+workspace-launcher --unpin ~/git-repos/workspace-launcher
+workspace-launcher --clear-history
+```
+
+Pinned rows use a `P` marker, which takes precedence over the current-directory
+`*` marker. Pins have a stable full-path order. They appear only when the directory
+is included in the current roots. Deleted directories do not appear in the picker;
+you can unpin a deleted directory by its original absolute path.
+
+The launcher records successful path selections and directory creation in every
+recency mode. It also records editor opens when the editor exits successfully.
+Cancelling the picker, failed actions, and headless benchmarks do not record visits.
+A path selection records the launcher returning a path, not confirmation that the
+parent shell changed directory.
+
+State uses canonical paths so symlink aliases share history and pins. It is stored
+in `$XDG_STATE_HOME/workspace-launcher/history.json`, or
+`~/.local/state/workspace-launcher/history.json` when `XDG_STATE_HOME` is unset or
+relative. The file contains local paths and last-selection timestamps. Writes use
+a lock and atomic replacement. History errors go to stderr without preventing a
+successful selection. Malformed state files are preserved and reported.
+
+`--clear-history` removes visit timestamps and keeps pins. New selections start
+recording history again. State commands run without fzf or configured scan roots.
 
 ## Key Bindings
 
