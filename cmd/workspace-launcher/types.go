@@ -105,6 +105,7 @@ type config struct {
 type childDir struct {
 	name      string
 	path      string
+	statePath string
 	root      string
 	rootLabel string
 	isDir     bool

@@ -260,11 +260,13 @@ func writeCandidates(w io.WriteCloser, candidates []candidate) error {
 }
 
 func writeSerializedCandidates(w io.Writer, candidates []candidate) error {
-	buf := bufio.NewWriterSize(w, 1<<20)
+	buf := bufio.NewWriterSize(w, 64<<10)
 	for i := range candidates {
 		cand := &candidates[i]
-		if _, err := buf.WriteString(serializeCandidate(cand)); err != nil {
-			return err
+		for _, field := range [...]string{cand.path, "\t", cand.matchText, "\t\t", cand.branchText, "\t", cand.display} {
+			if _, err := buf.WriteString(field); err != nil {
+				return err
+			}
 		}
 		if err := buf.WriteByte('\n'); err != nil {
 			return err

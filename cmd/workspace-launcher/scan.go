@@ -20,11 +20,27 @@ func buildCandidates(cfg config) ([]candidate, error) {
 		}
 
 		children = slices.Grow(children, len(entries))
+		stateRoot := ""
+		if len(cfg.state) > 0 {
+			stateRoot = canonicalWorkspacePath(root)
+		}
 		for _, entry := range entries {
+			if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
+				continue
+			}
 			path := filepath.Join(root, entry.Name())
+			statePath := ""
+			if stateRoot != "" {
+				if entry.IsDir() {
+					statePath = filepath.Join(stateRoot, entry.Name())
+				} else {
+					statePath = canonicalWorkspacePath(path)
+				}
+			}
 			children = append(children, childDir{
 				name:      entry.Name(),
 				path:      path,
+				statePath: statePath,
 				root:      root,
 				rootLabel: cfg.rootLabels[root],
 				isDir:     entry.IsDir(),
@@ -198,7 +214,10 @@ func candidateLayout(cfg config, details []repoDetails) config {
 func renderCandidate(cfg config, detail *repoDetails) candidate {
 	var entry workspaceEntry
 	if len(cfg.state) > 0 {
-		entry = cfg.state[canonicalWorkspacePath(detail.child.path)]
+		if detail.child.statePath == "" {
+			detail.child.statePath = canonicalWorkspacePath(detail.child.path)
+		}
+		entry = cfg.state[detail.child.statePath]
 	}
 	opened := int64(0)
 	if cfg.recency == recencyOpened {
@@ -334,13 +353,35 @@ func collectDirFacts(dir string, needGit, needLanguage bool) (dirFacts, error) {
 	}
 	defer file.Close()
 
+	firstBatch := true
 	for {
-		entries, readErr := file.ReadDir(16)
-		for _, entry := range entries {
-			switch entry.Name() {
+		var names []string
+		var entries []os.DirEntry
+		var readErr error
+		if firstBatch {
+			// Keep type information for markers near the start, avoiding an
+			// extra stat for .git in small repositories.
+			entries, readErr = file.ReadDir(16)
+			var firstNames [16]string
+			names = firstNames[:0]
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			firstBatch = false
+		} else {
+			// Large directories usually contain unrelated files. Only .git
+			// needs type information, so avoid allocating a DirEntry per file.
+			names, readErr = file.Readdirnames(16)
+		}
+		for i, name := range names {
+			switch name {
 			case ".git":
 				facts.hasGit = true
-				facts.gitIsDir = entry.IsDir()
+				if entries != nil {
+					facts.gitIsDir = entries[i].IsDir()
+				} else if info, statErr := os.Lstat(filepath.Join(dir, ".git")); statErr == nil {
+					facts.gitIsDir = info.IsDir()
+				}
 				if !facts.gitIsDir {
 					if content, readErr := os.ReadFile(filepath.Join(dir, ".git")); readErr == nil {
 						if gitDir, _, parseErr := parseGitDirFile(dir, content); parseErr == nil {
